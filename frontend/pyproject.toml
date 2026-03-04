@@ -1,0 +1,9 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pto_frontend"
+version = "0.1.0"
+description = "High-level imperative Python frontend for PTO IR"
+requires-python = ">=3.8"
