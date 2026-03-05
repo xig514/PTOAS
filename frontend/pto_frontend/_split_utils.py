@@ -104,6 +104,12 @@ def split_causal(tensor_layout, tile_layout, num_cores, core_id):
     can only attend to keys up to its position. This creates a triangular
     access pattern.
 
+    .. note:: Current implementation uses even split as a simplification.
+       True causal balancing (triangular workload distribution) is not yet
+       implemented.  The caller is responsible for masking out invalid
+       positions inside the iteration loop (e.g. skip K/V tiles where
+       kv_tile_idx > q_tile_idx).
+
     Parameters
     ----------
     tensor_layout : TensorLayout

@@ -1,89 +1,24 @@
 """FlashAttention using TileLayout for explicit tile indexing.
 
-Demonstrates manual tile iteration using TileLayout instead of distribute_nd.
-This gives more explicit control over tile access patterns.
+Demonstrates correct FlashAttention pipeline with:
+- Matmul using LEFT/RIGHT/ACC address spaces via Cube unit
+- Softmax using VEC address space via Vector unit
+- Data movement via MAT (L1) with tmov
+- Pipeline synchronisation via record_event/wait_event
+
+Pipeline flow:
+  GM ──TLOAD──▸ MAT ──TMOV──▸ LEFT/RIGHT ──TMATMUL──▸ ACC
+                                                        │
+                                                  TMOV (ACC→VEC)
+                                                        │
+                                                       VEC ── softmax ops
+                                                        │
+                                                  TMOV (VEC→MAT→LEFT)
+                                                        │
+                                                  ──TMATMUL──▸ ACC ──TSTORE──▸ GM
 """
 
 import pto_frontend as pto
-
-
-@pto.kernel
-def flash_attention_with_layout(
-    q: pto.Tensor(pto.float16, 2),      # [S_q, D]
-    k: pto.Tensor(pto.float16, 2),      # [S_kv, D]
-    v: pto.Tensor(pto.float16, 2),      # [S_kv, D]
-    out: pto.Tensor(pto.float16, 2),    # [S_q, D]
-):
-    """FlashAttention using TileLayout for manual tile indexing.
-
-    Uses TileLayout to explicitly compute tile coordinates and access patterns.
-    Each core computes its tile range based on core_id and TileLayout mapping.
-    """
-
-    TILE_S = 128
-    TILE_D = 64
-
-    # Create TileLayout for Q tiles
-    # Assume S_q = 512, so we have 512/128 = 4 tiles
-    q_tile_layout = pto.TileLayout(shape=(4,))  # 4 Q tiles along S dimension
-
-    # Get core information
-    core_id = pto.get_block_idx()
-    num_cores = pto.get_block_num()
-
-    # Compute this core's tile range using layout
-    # For 4 tiles and 2 cores: core 0 gets tiles [0,2), core 1 gets tiles [2,4)
-    num_q_tiles = 4
-    tiles_per_core = (num_q_tiles + num_cores - 1) // num_cores
-
-    q_tile_start = core_id * tiles_per_core
-    q_tile_end = (core_id + 1) * tiles_per_core
-
-    # Clamp to valid range
-    if q_tile_start > num_q_tiles:
-        q_tile_start = num_q_tiles
-    if q_tile_end > num_q_tiles:
-        q_tile_end = num_q_tiles
-
-    # Create TileLayout for K/V tiles
-    # Assume S_kv = 512, so we have 512/128 = 4 tiles
-    kv_tile_layout = pto.TileLayout(shape=(4,))  # 4 K/V tiles along S dimension
-
-    # Allocate tile buffers
-    tile_q = pto.make_tile((TILE_S, TILE_D), pto.float16, pto.VEC, addr=0)
-    tile_k = pto.make_tile((TILE_S, TILE_D), pto.float16, pto.VEC, addr=0x10000)
-    tile_v = pto.make_tile((TILE_S, TILE_D), pto.float16, pto.VEC, addr=0x20000)
-    tile_out = pto.make_tile((TILE_S, TILE_D), pto.float16, pto.VEC, addr=0x30000)
-
-    # Outer loop: iterate over this core's Q tiles
-    with pto.for_range(q_tile_start, q_tile_end) as q_tile_idx:
-        # Compute Q tile offset using layout
-        q_offset = q_tile_idx * TILE_S
-
-        # Load Q tile - use static partition
-        q_partition = q.partition(offsets=[q_offset, 0], sizes=[TILE_S, TILE_D])
-        pto.tload(q_partition, tile_q)
-
-        # Inner loop: iterate over all K/V tiles
-        num_kv_tiles = 4
-        with pto.for_range(0, num_kv_tiles) as kv_tile_idx:
-            # Compute K/V tile offset using layout
-            kv_offset = kv_tile_idx * TILE_S
-
-            # Load K and V tiles - use static partition
-            k_partition = k.partition(offsets=[kv_offset, 0], sizes=[TILE_S, TILE_D])
-            v_partition = v.partition(offsets=[kv_offset, 0], sizes=[TILE_S, TILE_D])
-
-            pto.tload(k_partition, tile_k)
-            pto.tload(v_partition, tile_v)
-
-            # Compute attention (simplified: just add)
-            pto.tadd(tile_q, tile_k, tile_out)
-            pto.tadd(tile_out, tile_v, tile_out)
-
-        # Store output tile - use static partition
-        out_partition = out.partition(offsets=[q_offset, 0], sizes=[TILE_S, TILE_D])
-        pto.tstore(tile_out, out_partition)
 
 
 @pto.kernel
@@ -93,68 +28,125 @@ def flash_attention_2d_layout(
     v: pto.Tensor(pto.float16, 2),      # [S_kv, D]
     out: pto.Tensor(pto.float16, 2),    # [S_q, D]
 ):
-    """FlashAttention with 2D TileLayout for Q tiles.
+    """FlashAttention with correct matmul, softmax, and pipeline sync.
 
-    Demonstrates using 2D layout to map (batch, seq) tile indices,
-    even though we're working with 2D tensors (simplified from BSND).
+    Uses TiledTensor.distribute for Q scheduling and for_each for K/V.
+
+    Tile sizes: Br=Bc=D=32 (square for simplicity).
+    Pipeline: GM → MAT → LEFT/RIGHT → ACC → VEC → MAT → LEFT → ACC → GM
     """
 
-    TILE_S = 128
-    TILE_D = 64
+    TILE = 32  # Br = Bc = D = 32
 
-    # Create 2D TileLayout for conceptual (batch, seq) tile grid
-    # In this simplified version: 1 batch x 4 seq tiles
-    q_tile_layout = pto.TileLayout(shape=(1, 4), stride=(4, 1))  # row-major
+    # --- L1 (MAT) buffers for DMA from GM ---
+    q_mat = pto.make_tile((TILE, TILE), pto.float16, pto.MAT, addr=0)
+    k_mat = pto.make_tile((TILE, TILE), pto.float16, pto.MAT,
+                          addr=TILE * TILE * 2)
+    v_mat = pto.make_tile((TILE, TILE), pto.float16, pto.MAT,
+                          addr=TILE * TILE * 4)
+    attn_mat = pto.make_tile((TILE, TILE), pto.float16, pto.MAT,
+                             addr=TILE * TILE * 6)
 
-    # Get core information
-    core_id = pto.get_block_idx()
+    # --- L0 buffers for Cube matmul ---
+    q_left = pto.make_tile((TILE, TILE), pto.float16, pto.LEFT, addr=0)
+    k_right = pto.make_tile((TILE, TILE), pto.float16, pto.RIGHT, addr=0)
+    s_acc = pto.make_tile((TILE, TILE), pto.float32, pto.ACC, addr=0)
 
-    # Map linear core_id to 2D tile coordinates using layout
-    # For 1x4 grid with 2 cores:
-    # core 0 -> tiles (0,0), (0,1)
-    # core 1 -> tiles (0,2), (0,3)
+    attn_left = pto.make_tile((TILE, TILE), pto.float16, pto.LEFT,
+                              addr=TILE * TILE * 2)
+    v_right = pto.make_tile((TILE, TILE), pto.float16, pto.RIGHT,
+                            addr=TILE * TILE * 2)
+    o_acc = pto.make_tile((TILE, TILE), pto.float32, pto.ACC,
+                          addr=TILE * TILE * 4)
 
-    total_tiles = 4
-    tiles_per_core = (total_tiles + 1) // 2  # 2 tiles per core
+    # --- VEC buffers for softmax ---
+    s_vec = pto.make_tile((TILE, TILE), pto.float32, pto.VEC, addr=0)
+    tmp_vec = pto.make_tile((TILE, TILE), pto.float32, pto.VEC,
+                            addr=TILE * TILE * 4)
+    attn_f16 = pto.make_tile((TILE, TILE), pto.float16, pto.VEC,
+                             addr=TILE * TILE * 8)
 
-    tile_start = core_id * tiles_per_core
-    tile_end = (core_id + 1) * tiles_per_core
-    if tile_end > total_tiles:
-        tile_end = total_tiles
+    # --- Tiling & distribution ---
+    q_tiled = q.tile(dim=0, tile_sizes=(TILE, TILE))
+    k_tiled = k.tile(dim=0, tile_sizes=(TILE, TILE))
+    v_tiled = v.tile(dim=0, tile_sizes=(TILE, TILE))
+    out_tiled = out.tile(dim=0, tile_sizes=(TILE, TILE))
 
-    # Allocate tile buffers
-    tile_q = pto.make_tile((TILE_S, TILE_D), pto.float16, pto.VEC, addr=0)
-    tile_k = pto.make_tile((TILE_S, TILE_D), pto.float16, pto.VEC, addr=0x10000)
-    tile_v = pto.make_tile((TILE_S, TILE_D), pto.float16, pto.VEC, addr=0x20000)
-    tile_out = pto.make_tile((TILE_S, TILE_D), pto.float16, pto.VEC, addr=0x30000)
+    q_dist = q_tiled.distribute()
 
-    # Iterate over this core's tiles
-    with pto.for_range(tile_start, tile_end) as linear_tile_idx:
-        # Compute tile offset (in this case, just linear)
-        q_offset = linear_tile_idx * TILE_S
+    # Outer loop: this core's Q tiles
+    with q_dist.for_each() as (q_tile_idx, q_view):
+        # Step 1: Load Q from GM → MAT
+        pto.tload(q_view, q_mat)
+        pto.record_event(pto.TLOAD, pto.TMOV_M2L, pto.EVENT_ID0)
+        pto.wait_event(pto.TLOAD, pto.TMOV_M2L, pto.EVENT_ID0)
 
-        # Load Q tile - use static partition
-        q_partition = q.partition(offsets=[q_offset, 0], sizes=[TILE_S, TILE_D])
-        pto.tload(q_partition, tile_q)
+        # Step 2: Move Q from MAT → LEFT
+        pto.tmov(q_mat, q_left)
 
         # Inner loop: all K/V tiles
-        with pto.for_range(0, 4) as kv_tile_idx:
-            kv_offset = kv_tile_idx * TILE_S
+        with k_tiled.for_each() as (kv_tile_idx, k_view):
+            v_view = v_tiled[kv_tile_idx]
 
-            k_partition = k.partition(offsets=[kv_offset, 0], sizes=[TILE_S, TILE_D])
-            v_partition = v.partition(offsets=[kv_offset, 0], sizes=[TILE_S, TILE_D])
+            # Step 3: Load K from GM → MAT → RIGHT
+            pto.tload(k_view, k_mat)
+            pto.record_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID1)
+            pto.wait_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID1)
+            pto.tmov(k_mat, k_right)
 
-            pto.tload(k_partition, tile_k)
-            pto.tload(v_partition, tile_v)
+            # Step 4: Matmul S = Q @ K^T via Cube unit
+            pto.record_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
+            pto.wait_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
+            pto.record_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID1)
+            pto.wait_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID1)
+            pto.tmatmul(q_left, k_right, s_acc)
 
-            # Attention computation (simplified)
-            pto.tadd(tile_q, tile_k, tile_out)
-            pto.tadd(tile_out, tile_v, tile_out)
+            # Step 5: Move S from ACC → VEC for softmax
+            pto.record_event(pto.TMATMUL, pto.TMOV_M2V, pto.EVENT_ID0)
+            pto.wait_event(pto.TMATMUL, pto.TMOV_M2V, pto.EVENT_ID0)
+            pto.tmov(s_acc, s_vec)
 
-        # Store output - use static partition
-        out_partition = out.partition(offsets=[q_offset, 0], sizes=[TILE_S, TILE_D])
-        pto.tstore(tile_out, out_partition)
+            # Step 6: Softmax on VEC unit
+            pto.record_event(pto.TMOV_M2V, pto.TVEC, pto.EVENT_ID0)
+            pto.wait_event(pto.TMOV_M2V, pto.TVEC, pto.EVENT_ID0)
+
+            pto.trowmax(s_vec, tmp_vec, tmp_vec)
+            pto.trowexpandsub(s_vec, tmp_vec, s_vec)
+            pto.texp(s_vec, s_vec)
+            pto.trowsum(s_vec, tmp_vec, tmp_vec)
+            pto.trowexpanddiv(s_vec, tmp_vec, s_vec)
+
+            # Step 7: Convert attention weights to f16 for Cube matmul
+            pto.tcvt(s_vec, attn_f16)
+
+            # Step 8: Move attn weights VEC → MAT → LEFT
+            pto.record_event(pto.TVEC, pto.TMOV_V2M, pto.EVENT_ID0)
+            pto.wait_event(pto.TVEC, pto.TMOV_V2M, pto.EVENT_ID0)
+            pto.tmov(attn_f16, attn_mat)
+
+            pto.record_event(pto.TMOV_V2M, pto.TMOV_M2L, pto.EVENT_ID0)
+            pto.wait_event(pto.TMOV_V2M, pto.TMOV_M2L, pto.EVENT_ID0)
+            pto.tmov(attn_mat, attn_left)
+
+            # Step 9: Load V from GM → MAT → RIGHT
+            pto.tload(v_view, v_mat)
+            pto.record_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID2)
+            pto.wait_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID2)
+            pto.tmov(v_mat, v_right)
+
+            # Step 10: Matmul O = attn @ V via Cube unit
+            pto.record_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
+            pto.wait_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
+            pto.record_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID2)
+            pto.wait_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID2)
+            pto.tmatmul(attn_left, v_right, o_acc)
+
+        # Step 11: Store O from ACC → GM
+        pto.record_event(pto.TMATMUL, pto.TSTORE_ACC, pto.EVENT_ID0)
+        pto.wait_event(pto.TMATMUL, pto.TSTORE_ACC, pto.EVENT_ID0)
+        out_view = out_tiled[q_tile_idx]
+        pto.tstore(o_acc, out_view)
 
 
 if __name__ == "__main__":
-    flash_attention_with_layout()
+    flash_attention_2d_layout()

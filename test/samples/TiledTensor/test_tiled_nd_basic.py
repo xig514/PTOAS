@@ -8,7 +8,7 @@ import pto_frontend as pto
 
 @pto.kernel
 def basic_nd_tiling(
-    x: pto.Tensor(pto.float16, 2),  # [128, 512]
+    x: pto.Tensor(pto.float16, 2),  # [M, N]
 ):
     # Tile both dimensions
     tiled = x.tile_nd(
@@ -17,7 +17,7 @@ def basic_nd_tiling(
     )
 
     # Iterate over subset of tiles
-    # Dim 0: 2 tiles (out of 4), Dim 1: 2 tiles (out of 4)
+    # Dim 0: 2 tiles (out of M/32), Dim 1: 2 tiles (out of N/128)
     with tiled.for_each(ranges=[(0, 2, 1), (0, 2, 1)]) as (tile_idx, partition):
         # tile_idx is (i, j)
         # partition is [32, 128]
@@ -27,26 +27,5 @@ def basic_nd_tiling(
         pto.tstore(tile_buf, partition)
 
 
-@pto.kernel
-def nd_tiling_full_range(
-    y: pto.Tensor(pto.float32, 2),  # [256, 512]
-):
-    # Tile both dimensions
-    tiled = y.tile_nd(
-        tile_sizes=(64, 128),
-        tile_dims=[0, 1]
-    )
-
-    # Iterate over all tiles (default ranges)
-    with tiled.for_each() as (tile_idx, partition):
-        # tile_idx is (i, j)
-        # partition is [64, 128]
-
-        tile_buf = pto.make_tile((64, 128), pto.float32, pto.VEC, addr=0)
-        pto.tload(partition, tile_buf)
-        pto.tstore(tile_buf, partition)
-
-
 if __name__ == "__main__":
     basic_nd_tiling()
-    nd_tiling_full_range()

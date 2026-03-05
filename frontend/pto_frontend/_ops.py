@@ -315,6 +315,39 @@ def tmatmul_bias(lhs, rhs, bias, dst):
 
 
 # ---------------------------------------------------------------------------
+#  Data movement / layout
+# ---------------------------------------------------------------------------
+
+def ttrans(src, dst):
+    """Transpose a tile into *dst* using an implementation-defined temporary."""
+    _pto.TTransOp(src.ssa, dst.ssa)
+
+
+# ---------------------------------------------------------------------------
+#  Row-expand broadcast ops  (src0_tile, src1_vector, dst)
+# ---------------------------------------------------------------------------
+
+def trowexpand(src, dst):
+    """Broadcast first element of each row across the entire row."""
+    _pto.TRowExpandOp(src.ssa, dst.ssa)
+
+
+def trowexpanddiv(src, div_vec, dst):
+    """Row-wise broadcast divide: dst[i,j] = src[i,j] / div_vec[i,0]."""
+    _pto.TRowExpandDivOp(src.ssa, div_vec.ssa, dst.ssa)
+
+
+def trowexpandmul(src, mul_vec, dst):
+    """Row-wise broadcast multiply: dst[i,j] = src[i,j] * mul_vec[i,0]."""
+    _pto.TRowExpandMulOp(src.ssa, mul_vec.ssa, dst.ssa)
+
+
+def trowexpandsub(src, sub_vec, dst):
+    """Row-wise broadcast subtract: dst[i,j] = src[i,j] - sub_vec[i,0]."""
+    _pto.TRowExpandSubOp(src.ssa, sub_vec.ssa, dst.ssa)
+
+
+# ---------------------------------------------------------------------------
 #  Type conversion
 # ---------------------------------------------------------------------------
 
