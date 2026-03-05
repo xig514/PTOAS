@@ -108,6 +108,39 @@ class _TensorProxy:
         ).result
         return _PartitionView(pv, tuple(static_sizes), self.dtype)
 
+    # -- tiling: split one dimension into fixed-size tiles --
+
+    def tile(self, dim, tile_sizes=None, size=None):
+        """Tile the tensor along *dim*.
+
+        Parameters
+        ----------
+        dim : int
+            The dimension to iterate over.
+        tile_sizes : tuple[int, ...], optional
+            Static tile size for **every** dimension.  Produces fully-static
+            partition views (required when the result feeds ``tload``).
+        size : int, optional
+            Tile size for the iterated dimension only.  Other dimensions
+            use the full dynamic extent (``-1`` in the partition type).
+            Mutually exclusive with *tile_sizes*.
+
+        Returns
+        -------
+        TiledTensor
+        """
+        from ._tiled_tensor import TiledTensor
+
+        if tile_sizes is not None and size is not None:
+            raise ValueError("Provide either tile_sizes or size, not both")
+        if tile_sizes is not None:
+            return TiledTensor(self, dim, tuple(tile_sizes))
+        if size is not None:
+            ts = [None] * self.ndim
+            ts[dim] = size
+            return TiledTensor(self, dim, tuple(ts))
+        raise ValueError("Provide either tile_sizes or size")
+
     # -- explicit partition with known static sizes --
 
     def partition(self, offsets, sizes):

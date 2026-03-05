@@ -52,7 +52,7 @@ ptoas test/samples/FlashAttention/flash_attention_softmax.pto
 ```bash
 cd test/samples/AddPtr
 python3 addptr.py >a.pto
-ptoas a.pto
+ptoas a.pto --pto-level=level3
 ```
 
 ## Rules
