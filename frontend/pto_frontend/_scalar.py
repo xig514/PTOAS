@@ -20,6 +20,16 @@ class ScalarValue:
         from ._ir_builder import get_builder
 
         if isinstance(other, int):
+            # Create a constant matching self.ssa's type so that arith ops
+            # don't get a type mismatch (e.g. i64 vs index).
+            from mlir.ir import IndexType, IntegerType, IntegerAttr
+
+            ty = self.ssa.type
+            if ty == IndexType.get():
+                return get_builder().constant_index(other)
+            if ty == IntegerType.get_signless(64):
+                return get_builder().constant_i64(other)
+            # Fallback: treat as index (legacy behaviour)
             return get_builder().constant_index(other)
         if isinstance(other, float):
             return get_builder().constant_f32(other)
