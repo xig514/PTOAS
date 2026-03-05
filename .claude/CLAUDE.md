@@ -60,3 +60,5 @@ ptoas a.pto --pto-level=level3
 - Make sure the test case in "Run a python ir and ptoas testcase" can be executed without error.
 - Your testcase should also use ptoas to compile the ir which is generated from your new frontend. 
 - Create a new directory for all new code and donot contaminate original code. (If there is some bug in original code, it's ok to fix it). Supply compile and install scripts to install the dialect.
+- The frontend representation must offer strong ergonomics and high expressiveness.
+- ptoas command needs to add argument "--pto-level=level3"

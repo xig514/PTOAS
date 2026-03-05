@@ -101,6 +101,42 @@ def tstore(tile, pv):
     _pto.TStoreOp(None, tile.ssa, pv.ssa)
 
 
+def tload_tile(tensor, tile_coord, tile_layout, tile_buf):
+    """Load data from tensor at tile coordinate into tile buffer.
+
+    Parameters
+    ----------
+    tensor : _TensorProxy
+        Source tensor
+    tile_coord : TileCoordinate
+        Coordinate of the tile to load
+    tile_layout : TileLayout
+        Layout of the tile
+    tile_buf : Tile
+        Destination tile buffer
+    """
+    pv = tensor.partition_at_coord(tile_coord, tile_layout)
+    _pto.TLoadOp(None, pv.ssa, tile_buf.ssa)
+
+
+def tstore_tile(tile_buf, tensor, tile_coord, tile_layout):
+    """Store tile buffer data back to tensor at tile coordinate.
+
+    Parameters
+    ----------
+    tile_buf : Tile
+        Source tile buffer
+    tensor : _TensorProxy
+        Destination tensor
+    tile_coord : TileCoordinate
+        Coordinate of the tile to store
+    tile_layout : TileLayout
+        Layout of the tile
+    """
+    pv = tensor.partition_at_coord(tile_coord, tile_layout)
+    _pto.TStoreOp(None, tile_buf.ssa, pv.ssa)
+
+
 def tmov(src, dst):
     """Move data between tile buffers (possibly across address spaces)."""
     _pto.TMovOp(None, src.ssa, dst.ssa)

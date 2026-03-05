@@ -27,6 +27,7 @@ from ._ops import (
     make_tile,
     # DMA
     tload, tstore, tmov,
+    tload_tile, tstore_tile,  # Coordinate-based load/store
     # binary
     tadd, tsub, tmul, tdiv, tand, tor, txor, tmax, tmin,
     # unary
@@ -47,6 +48,14 @@ from ._ops import (
 
 # -- control flow --
 from ._control_flow import for_range, if_
+
+# -- tiling utilities --
+from ._layout import TileLayout as TileLayout_v1  # Old version
+from ._layout_v2 import TensorLayout, TileLayout, TileCoordinate, TiledView
+from ._tiled_tensor_nd import TiledTensorND, DistributedTiledTensorND
+
+# -- split utilities --
+from ._split_utils import split_even, split_causal, split_sequential
 
 # -- address-space & sync constants --
 from ._constants import (
