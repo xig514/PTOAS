@@ -27,7 +27,6 @@ from mlir.dialects import scf, arith
 from ._scalar import ScalarValue
 from ._tensor import _PartitionView
 from ._utils import ensure_index_ssa
-from ._layout import TileLayout
 
 
 class TiledTensorND:

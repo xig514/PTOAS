@@ -83,26 +83,44 @@ class ScalarValue:
 
     def __lt__(self, other):
         rhs = self._coerce(other)
+        if self.is_float:
+            from mlir.dialects.arith import CmpFPredicate
+            return ScalarValue(arith.CmpFOp(CmpFPredicate.OLT, self.ssa, rhs).result)
         return ScalarValue(arith.CmpIOp(CmpIPredicate.slt, self.ssa, rhs).result)
 
     def __le__(self, other):
         rhs = self._coerce(other)
+        if self.is_float:
+            from mlir.dialects.arith import CmpFPredicate
+            return ScalarValue(arith.CmpFOp(CmpFPredicate.OLE, self.ssa, rhs).result)
         return ScalarValue(arith.CmpIOp(CmpIPredicate.sle, self.ssa, rhs).result)
 
     def __gt__(self, other):
         rhs = self._coerce(other)
+        if self.is_float:
+            from mlir.dialects.arith import CmpFPredicate
+            return ScalarValue(arith.CmpFOp(CmpFPredicate.OGT, self.ssa, rhs).result)
         return ScalarValue(arith.CmpIOp(CmpIPredicate.sgt, self.ssa, rhs).result)
 
     def __ge__(self, other):
         rhs = self._coerce(other)
+        if self.is_float:
+            from mlir.dialects.arith import CmpFPredicate
+            return ScalarValue(arith.CmpFOp(CmpFPredicate.OGE, self.ssa, rhs).result)
         return ScalarValue(arith.CmpIOp(CmpIPredicate.sge, self.ssa, rhs).result)
 
     def __eq__(self, other):
         rhs = self._coerce(other)
+        if self.is_float:
+            from mlir.dialects.arith import CmpFPredicate
+            return ScalarValue(arith.CmpFOp(CmpFPredicate.OEQ, self.ssa, rhs).result)
         return ScalarValue(arith.CmpIOp(CmpIPredicate.eq, self.ssa, rhs).result)
 
     def __ne__(self, other):
         rhs = self._coerce(other)
+        if self.is_float:
+            from mlir.dialects.arith import CmpFPredicate
+            return ScalarValue(arith.CmpFOp(CmpFPredicate.ONE, self.ssa, rhs).result)
         return ScalarValue(arith.CmpIOp(CmpIPredicate.ne, self.ssa, rhs).result)
 
     def __hash__(self):

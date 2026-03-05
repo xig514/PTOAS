@@ -36,6 +36,10 @@ from ._ops import (
     tadds, tsubs, tmuls, tdivs, tmaxs, tmins,
     # reduction
     trowmax, trowmin, trowsum, tcolmax, tcolmin, tcolsum,
+    # row-expand broadcast
+    trowexpand, trowexpanddiv, trowexpandmul, trowexpandsub,
+    # layout / transpose
+    ttrans,
     # matmul
     tmatmul, tmatmul_acc, tmatmul_bias,
     # convert
