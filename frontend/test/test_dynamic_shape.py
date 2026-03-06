@@ -21,7 +21,7 @@ def dynamic_add(
         pto.tload(x.partition([i, 0], [32, 32]), tile_x)
         pto.tload(y.partition([i, 0], [32, 32]), tile_y)
         pto.tadd(tile_x, tile_y, tile_z)
-        pto.tstore(tile_z, z.partition([i, 0], [32, 32]))
+        pto.tstore(z.partition([i, 0], [32, 32]), tile_z)
 
 
 if __name__ == "__main__":

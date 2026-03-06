@@ -13,12 +13,10 @@ When you change any user-visible behavior, keep these layers synchronized:
 5. **Docs**: `README.md`, `docs/`
 6. **Tests**: `test/`
 
-## Rules
-
-See `.claude/rules/` for specific guidance:
-
-- `cross-layer-sync.md`
-- `testing-and-examples.md`
+## Architecture
+- `include/PTO/IR` - pto mlir
+- `frontend` - the front end code of pto mlir
+- `test/samples/TiledTensor/LAYOUT_V2_DESIGN.md` - design of the TileLayout
 
 ## Build Commands
 ### Full configure
@@ -40,6 +38,8 @@ export PTO_PYTHON_ROOT=$PTO_INSTALL_DIR/
 export PYTHONPATH=$MLIR_PYTHON_ROOT:$PTO_PYTHON_ROOT:$PYTHONPATH
 export LD_LIBRARY_PATH=$LLVM_BUILD_DIR/lib:$PTO_INSTALL_DIR/lib:$LD_LIBRARY_PATH
 export PATH=$PTO_SOURCE_DIR/build/tools/ptoas:$PATH
+source /usr/local/Ascend/ascend-toolkit/latest/bin/setenv.bash
+export ASCEND_TOOLKIT_HOME=/usr/local/Ascend/ascend-toolkit/latest
 ```
 
 ## Test Commands

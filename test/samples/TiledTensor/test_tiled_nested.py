@@ -34,7 +34,7 @@ def nested_tile_matmul(
             pto.tadd(tile_q, tile_k, tile_o)
 
         o_view = out_tiled[qi]
-        pto.tstore(tile_o, o_view)
+        pto.tstore(o_view, tile_o)
 
 
 if __name__ == "__main__":

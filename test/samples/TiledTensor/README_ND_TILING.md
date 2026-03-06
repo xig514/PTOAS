@@ -84,7 +84,7 @@ with tiled.for_each(ranges=[(0, 2, 1), (0, 4, 1)]) as (tile_idx, partition):
     # partition is [32, 128] view
     tile_buf = pto.make_tile((32, 128), pto.float16, pto.VEC, addr=0)
     pto.tload(partition, tile_buf)
-    pto.tstore(tile_buf, partition)
+    pto.tstore(partition, tile_buf)
 ```
 
 ### Multi-Core Distribution
@@ -120,7 +120,7 @@ with q_dist.for_each() as (q_idx, q_view):
         pto.tload(v_view, tile_v)
         # Compute attention...
 
-    pto.tstore(tile_out, out_view)
+    pto.tstore(out_view, tile_out)
 ```
 
 ## Implementation Details

@@ -64,7 +64,7 @@ def tiled_matmul_pipeline(
         # Store result: ACC → GM
         pto.record_event(pto.TMATMUL, pto.TSTORE_ACC, pto.EVENT_ID0)
         pto.wait_event(pto.TMATMUL, pto.TSTORE_ACC, pto.EVENT_ID0)
-        pto.tstore(c_acc, c_view)
+        pto.tstore(c_view, c_acc)
 
 
 @pto.kernel
@@ -132,7 +132,7 @@ def tiled_matmul_acc(
     # Store
     pto.record_event(pto.TMATMUL, pto.TSTORE_ACC, pto.EVENT_ID0)
     pto.wait_event(pto.TMATMUL, pto.TSTORE_ACC, pto.EVENT_ID0)
-    pto.tstore(c_acc, c_part)
+    pto.tstore(c_part, c_acc)
 
 
 if __name__ == "__main__":
