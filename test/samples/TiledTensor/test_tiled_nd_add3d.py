@@ -52,7 +52,7 @@ def add_3d_tiled(
             pto.tload(part_a, tile_a)
             pto.tload(part_b, tile_b)
             pto.tadd(tile_a, tile_b, tile_c)
-            pto.tstore(tile_c, part_c)
+            pto.tstore(part_c, tile_c)
 
 
 if __name__ == "__main__":

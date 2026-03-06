@@ -29,7 +29,7 @@ def tiled_add(
         pto.tload(x_view, tile_x)
         pto.tload(y_view, tile_y)
         pto.tadd(tile_x, tile_y, tile_z)
-        pto.tstore(tile_z, z_view)
+        pto.tstore(z_view, tile_z)
 
 
 if __name__ == "__main__":

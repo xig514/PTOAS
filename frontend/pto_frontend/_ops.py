@@ -10,6 +10,8 @@ from ._tile import Tile
 from ._scalar import ScalarValue
 from ._constants import VEC, MAT, LEFT, RIGHT, ACC, BIAS, SCALING
 
+from mlir.dialects import arith
+
 
 # ---------------------------------------------------------------------------
 #  Tile configuration defaults by address space
@@ -96,7 +98,7 @@ def tload(pv, tile):
     _pto.TLoadOp(None, pv.ssa, tile.ssa)
 
 
-def tstore(tile, pv):
+def tstore(pv, tile):
     """Store a tile buffer back to a partition view."""
     _pto.TStoreOp(None, tile.ssa, pv.ssa)
 
@@ -390,3 +392,42 @@ def get_block_idx():
 def get_block_num():
     """Return the total number of blocks as a ScalarValue."""
     return ScalarValue(_pto.GetBlockNumOp().result)
+
+
+# ---------------------------------------------------------------------------
+#  Scalar memory access
+# ---------------------------------------------------------------------------
+
+def get_value(tensor, idx, *, as_index=True):
+    """Load a single scalar element from a tensor at the given index.
+
+    Uses ``pto.load_scalar`` to read one element from global memory.
+    The result is a ScalarValue usable in arithmetic, loop bounds, etc.
+
+    Parameters
+    ----------
+    tensor : _TensorProxy
+        Source tensor
+    idx : int or ScalarValue
+        Flat element offset
+    as_index : bool
+        If True and the element type is integer, automatically cast
+        the result to index type for use in arithmetic and loop bounds.
+
+    Returns
+    -------
+    ScalarValue
+        The loaded scalar value
+    """
+    from ._utils import ensure_index_ssa
+    from mlir.ir import IndexType
+
+    idx_ssa = ensure_index_ssa(idx)
+    result_type = tensor.dtype.to_mlir()
+    val = _pto.load_scalar(result_type, tensor.ptr_ssa, idx_ssa)
+    is_float = tensor.dtype.name in ("float16", "float32", "bfloat16")
+
+    if as_index and not is_float:
+        idx_ty = IndexType.get()
+        val = arith.IndexCastOp(idx_ty, val).result
+    return ScalarValue(val, is_float=is_float)

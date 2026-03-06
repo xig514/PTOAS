@@ -47,7 +47,7 @@ def matmul_kernel(
     pto.wait_event(pto.TMATMUL, pto.TSTORE_ACC, pto.EVENT_ID0)
 
     # Store ACC -> GM
-    pto.tstore(c_acc, c[0:M, 0:N])
+    pto.tstore(c[0:M, 0:N], c_acc)
 
 
 if __name__ == "__main__":

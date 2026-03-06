@@ -24,7 +24,7 @@ def basic_nd_tiling(
 
         tile_buf = pto.make_tile((32, 128), pto.float16, pto.VEC, addr=0)
         pto.tload(partition, tile_buf)
-        pto.tstore(tile_buf, partition)
+        pto.tstore(partition, tile_buf)
 
 
 if __name__ == "__main__":

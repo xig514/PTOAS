@@ -48,18 +48,26 @@ from ._ops import (
     record_event, wait_event, barrier_sync,
     # system
     get_block_idx, get_block_num,
+    # scalar memory access
+    get_value
 )
+
+# -- jit decorator --
+from .jit import jit
+
+# -- metadata decorator --
+from ._metadata import pto_meta_data
 
 # -- control flow --
 from ._control_flow import for_range, if_
 
 # -- tiling utilities --
 from ._layout import TileLayout as TileLayout_v1  # Old version
-from ._layout_v2 import TensorLayout, TileLayout, TileCoordinate, TiledView
+from ._layout_v2 import TensorLayout, TileLayout, TileCoordinate, TiledView, PartialCoord, coord_combine
 from ._tiled_tensor_nd import TiledTensorND, DistributedTiledTensorND
 
 # -- split utilities --
-from ._split_utils import split_even, split_causal, split_sequential
+from ._split_utils import split_even, split_causal, split_sequential, split_even_1d, Tiled1DView
 
 # -- address-space & sync constants --
 from ._constants import (

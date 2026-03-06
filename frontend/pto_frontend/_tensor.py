@@ -228,17 +228,22 @@ class _TensorProxy:
     # -- explicit partition with known static sizes --
 
     def partition(self, offsets, sizes):
-        """Create a partition view with explicit offsets and static sizes.
+        """Create a partition view with explicit offsets and sizes.
 
         ``offsets`` may be ints or ScalarValues (dynamic).
-        ``sizes`` must be ints (static).
+        ``sizes`` may be ints (static) or ScalarValues (dynamic → -1 in type).
         """
         from ._utils import ensure_index_ssa
         from mlir.dialects import pto as _pto
+        from ._scalar import ScalarValue
 
         off_ssas = [ensure_index_ssa(o) for o in offsets]
         sz_ssas = [ensure_index_ssa(s) for s in sizes]
-        static_sizes = list(sizes)
+        # For static sizes use the int value; for dynamic (ScalarValue) use -1
+        static_sizes = [
+            -1 if isinstance(s, ScalarValue) else s
+            for s in sizes
+        ]
 
         tv = self._make_tensor_view()
         pv_type = _pto.PartitionTensorViewType.get(

@@ -18,7 +18,7 @@ def vector_add(
     pto.tload(x[0:32, 0:32], tile_x)
     pto.tload(y[0:32, 0:32], tile_y)
     pto.tadd(tile_x, tile_y, tile_z)
-    pto.tstore(tile_z, z[0:32, 0:32])
+    pto.tstore(z[0:32, 0:32], tile_z)
 
 
 if __name__ == "__main__":

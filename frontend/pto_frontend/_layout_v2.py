@@ -145,6 +145,32 @@ class TileLayout:
         return f"TileLayout(shape={self.shape}, stride={self.stride})"
 
 
+class PartialCoord:
+    """A subset of coordinate dimensions selected from a TileCoordinate.
+
+    Created by ``TileCoordinate.select(*dims)`` and used with
+    ``coord_combine()`` to compose new coordinates from multiple sources.
+
+    Parameters
+    ----------
+    values : tuple of int or ScalarValue
+        The selected coordinate values
+    source_dims : tuple of int
+        Original dimension indices these values came from
+    """
+
+    def __init__(self, values, source_dims=None):
+        self.values = tuple(values)
+        self.source_dims = tuple(source_dims) if source_dims else ()
+
+    @property
+    def rank(self):
+        return len(self.values)
+
+    def __repr__(self):
+        return f"PartialCoord(values={self.values}, dims={self.source_dims})"
+
+
 class TileCoordinate:
     """Coordinate of a tile in the tile grid.
 
@@ -171,8 +197,94 @@ class TileCoordinate:
     def __iter__(self):
         return iter(self.coords)
 
+    def select(self, *dims):
+        """Select specific dimensions from this coordinate.
+
+        Parameters
+        ----------
+        *dims : int
+            Dimension indices to select
+
+        Returns
+        -------
+        PartialCoord
+            A partial coordinate containing only the selected dimensions
+
+        Example
+        -------
+        >>> coord = TileCoordinate((b, n, sq, d))
+        >>> coord.select(0, 1, 2)  # -> PartialCoord with (b, n, sq)
+        """
+        values = [self.coords[d] for d in dims]
+        return PartialCoord(values, dims)
+
+    def offset_by(self, dim, offset):
+        """Create a new coordinate with an offset added to one dimension.
+
+        Parameters
+        ----------
+        dim : int
+            Dimension index to offset
+        offset : int or ScalarValue
+            Offset to add (in tile units)
+
+        Returns
+        -------
+        TileCoordinate
+            New coordinate with the offset applied
+
+        Example
+        -------
+        >>> local_coord = TileCoordinate((sq_local, d))
+        >>> global_coord = local_coord.offset_by(dim=0, offset=q_start)
+        """
+        new_coords = list(self.coords)
+        orig = new_coords[dim]
+        if isinstance(orig, ScalarValue):
+            new_coords[dim] = orig + offset
+        elif isinstance(offset, ScalarValue):
+            new_coords[dim] = offset + orig
+        else:
+            new_coords[dim] = orig + offset
+        return TileCoordinate(tuple(new_coords))
+
     def __repr__(self):
         return f"TileCoordinate{self.coords}"
+
+
+def coord_combine(*parts):
+    """Combine multiple partial/full coordinates into a new TileCoordinate.
+
+    Accepts any mix of ``PartialCoord``, ``TileCoordinate``, or raw
+    ``ScalarValue`` / ``int`` values, and concatenates them in order.
+
+    Parameters
+    ----------
+    *parts : PartialCoord, TileCoordinate, ScalarValue, or int
+        Coordinate fragments to concatenate
+
+    Returns
+    -------
+    TileCoordinate
+        New coordinate with all values concatenated
+
+    Example
+    -------
+    >>> pse_coord = coord_combine(
+    ...     q_coord.select(0, 1, 2),   # [B, N, Sq] from Q
+    ...     k_coord.select(2),          # [Sk] from K
+    ... )
+    """
+    all_values = []
+    for p in parts:
+        if isinstance(p, PartialCoord):
+            all_values.extend(p.values)
+        elif isinstance(p, TileCoordinate):
+            all_values.extend(p.coords)
+        else:
+            # Raw scalar or int
+            all_values.append(p)
+    return TileCoordinate(tuple(all_values))
 
 
 class TiledView:

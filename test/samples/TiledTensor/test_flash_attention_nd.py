@@ -145,7 +145,7 @@ def flash_attention_nd(
         pto.record_event(pto.TMATMUL, pto.TSTORE_ACC, pto.EVENT_ID0)
         pto.wait_event(pto.TMATMUL, pto.TSTORE_ACC, pto.EVENT_ID0)
         out_view = out_tiled[q_idx]
-        pto.tstore(o_acc, out_view)
+        pto.tstore(out_view, o_acc)
 
 
 if __name__ == "__main__":

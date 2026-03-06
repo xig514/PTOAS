@@ -22,7 +22,7 @@ def control_flow_demo(
         with pto.if_(cond):
             pto.tadd(tile_a, tile_a, tile_b)
 
-        pto.tstore(tile_b, y.partition([i, 0], [32, 32]))
+        pto.tstore(y.partition([i, 0], [32, 32]), tile_b)
 
 
 if __name__ == "__main__":

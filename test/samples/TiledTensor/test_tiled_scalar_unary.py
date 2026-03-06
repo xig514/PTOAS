@@ -40,7 +40,7 @@ def tiled_scalar_ops(
         pto.tmaxs(tile_y, 0.0, tile_z)      # clamp lower bound (ReLU-like)
         pto.tmins(tile_z, 6.0, tile_z)      # clamp upper bound (ReLU6)
 
-        pto.tstore(tile_z, z_view)
+        pto.tstore(z_view, tile_z)
 
 
 @pto.kernel
@@ -74,7 +74,7 @@ def tiled_unary_ops(
         pto.tneg(tile_c, tile_b)      # -x
         pto.trelu(tile_b, tile_c)     # relu(-x) = 0 for positive x
 
-        pto.tstore(tile_c, z_view)
+        pto.tstore(z_view, tile_c)
 
 
 if __name__ == "__main__":

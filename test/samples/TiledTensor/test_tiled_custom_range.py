@@ -31,7 +31,7 @@ def custom_range_add(
         z_view = z_tiled[i]
         pto.tload(x_view, tile_x)
         pto.tadd(tile_x, tile_x, tile_z)
-        pto.tstore(tile_z, z_view)
+        pto.tstore(z_view, tile_z)
 
 
 if __name__ == "__main__":

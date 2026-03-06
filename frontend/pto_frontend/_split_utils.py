@@ -4,10 +4,12 @@ Provides various strategies for splitting tensors into tiles and
 distributing them across cores.
 """
 
-from ._layout_v2 import TensorLayout, TileLayout, TiledView
+from ._layout_v2 import TensorLayout, TileLayout, TiledView, TileCoordinate
 from ._scalar import ScalarValue
 from ._utils import ensure_index_ssa
-from mlir.dialects import arith
+from mlir.dialects import arith, scf
+from mlir.ir import InsertionPoint
+from contextlib import contextmanager
 
 
 def split_even(tensor_layout, tile_layout, num_cores, core_id):
@@ -244,6 +246,97 @@ def split_sequential(tensor_layout, tile_layout):
         ranges.append((0, ScalarValue(num_tiles), 1))
 
     return TiledView(tensor_layout, tile_layout, ranges)
+
+
+class Tiled1DView:
+    """Result of splitting a 1D scalar range across cores.
+
+    Iterates over a contiguous sub-range [start, end) of integer indices.
+    Unlike TiledView, this is not tied to a tensor layout — it simply
+    represents a range of scalar indices (e.g., batch indices).
+
+    Parameters
+    ----------
+    start : ScalarValue
+        Start index (inclusive)
+    end : ScalarValue
+        End index (exclusive)
+    """
+
+    def __init__(self, start, end):
+        self.start = start
+        self.end = end
+
+    def for_each(self):
+        """Iterate over each index in [start, end).
+
+        Yields
+        ------
+        idx : ScalarValue
+            Current index
+        """
+        @contextmanager
+        def _iterate():
+            s = ensure_index_ssa(self.start)
+            e = ensure_index_ssa(self.end)
+            st = ensure_index_ssa(1)
+
+            loop = scf.ForOp(s, e, st, [])
+            ip = InsertionPoint(loop.body)
+            ip.__enter__()
+            try:
+                idx = ScalarValue(loop.induction_variable)
+                yield idx
+                scf.YieldOp([])
+            finally:
+                ip.__exit__(None, None, None)
+
+        return _iterate()
+
+
+def split_even_1d(count, num_cores, core_id):
+    """Split a 1D range [0, count) evenly across cores.
+
+    Returns a Tiled1DView representing the sub-range assigned to core_id.
+    Useful for distributing batch indices or token ranges across cores.
+
+    Parameters
+    ----------
+    count : int or ScalarValue
+        Total number of items
+    num_cores : int or ScalarValue
+        Total number of cores
+    core_id : int or ScalarValue
+        ID of current core (0-indexed)
+
+    Returns
+    -------
+    Tiled1DView
+        View containing this core's assigned range [start, end)
+    """
+    from ._ir_builder import get_builder
+    builder = get_builder()
+
+    count_ssa = ensure_index_ssa(count)
+    num_cores_ssa = ensure_index_ssa(num_cores)
+    core_id_ssa = ensure_index_ssa(core_id)
+
+    # items_per_core = ceildiv(count, num_cores)
+    one = builder.constant_index(1)
+    num_cores_minus_1 = arith.SubIOp(num_cores_ssa, one).result
+    numerator = arith.AddIOp(count_ssa, num_cores_minus_1).result
+    items_per_core = arith.DivSIOp(numerator, num_cores_ssa).result
+
+    # start = min(core_id * items_per_core, count)
+    raw_start = arith.MulIOp(core_id_ssa, items_per_core).result
+    start = _index_min(raw_start, count_ssa)
+
+    # end = min((core_id + 1) * items_per_core, count)
+    core_id_plus_1 = arith.AddIOp(core_id_ssa, one).result
+    raw_end = arith.MulIOp(core_id_plus_1, items_per_core).result
+    end = _index_min(raw_end, count_ssa)
+
+    return Tiled1DView(ScalarValue(start), ScalarValue(end))
 
 
 def _index_min(a, b):

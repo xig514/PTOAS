@@ -43,7 +43,7 @@ def tiled_conditional_add(
                 # Odd tiles: z = x (copy via VEC→VEC move)
                 pto.tmov(tile_x, tile_z)
 
-        pto.tstore(tile_z, z_view)
+        pto.tstore(z_view, tile_z)
 
 
 @pto.kernel
@@ -67,7 +67,7 @@ def tiled_step_iteration(
 
         pto.tload(x_view, tile_x)
         pto.tadd(tile_x, tile_x, tile_z)  # z = 2*x
-        pto.tstore(tile_z, z_view)
+        pto.tstore(z_view, tile_z)
 
 
 @pto.kernel
@@ -95,7 +95,7 @@ def tiled_boundary_check(
             pto.tload(pv, tile_x)
             pto.texp(tile_x, tile_z)
             out_pv = z.partition([i * TILE, 0], [TILE, TILE])
-            pto.tstore(tile_z, out_pv)
+            pto.tstore(out_pv, tile_z)
 
 
 if __name__ == "__main__":

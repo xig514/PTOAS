@@ -51,7 +51,7 @@ def tiled_softmax(
         # 6) convert f32 → f16
         pto.tcvt(tile_in, tile_out_f16)
 
-        pto.tstore(tile_out_f16, z_view)
+        pto.tstore(z_view, tile_out_f16)
 
 
 @pto.kernel
@@ -83,7 +83,7 @@ def tiled_row_broadcast_ops(
         # Row-wise broadcast multiply
         pto.trowexpandmul(tile_x, tile_s, tile_z)
 
-        pto.tstore(tile_z, z_view)
+        pto.tstore(z_view, tile_z)
 
 
 if __name__ == "__main__":

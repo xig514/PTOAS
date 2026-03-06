@@ -1,0 +1,46 @@
+module {
+  func.func @vector_add(%arg0: !pto.ptr<f16>, %arg1: index, %arg2: index, %arg3: !pto.ptr<f16>, %arg4: index, %arg5: index, %arg6: !pto.ptr<f16>, %arg7: index, %arg8: index) {
+    %0 = pto.get_block_idx
+    %c32_i64 = arith.constant 32 : i64
+    %1 = arith.muli %0, %c32_i64 : i64
+    %2 = arith.index_cast %1 : i64 to index
+    %c0 = arith.constant 0 : index
+    %c32 = arith.constant 32 : index
+    %c32_0 = arith.constant 32 : index
+    %c1 = arith.constant 1 : index
+    %3 = arith.muli %arg2, %c1 : index
+    %4 = pto.make_tensor_view %arg0, shape = [%arg1, %arg2] strides = [%3, %c1] : !pto.tensor_view<?x?xf16>
+    %5 = pto.partition_view %4, offsets = [%2, %c0], sizes = [%c32, %c32_0] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<32x32xf16>
+    %c32_i64_1 = arith.constant 32 : i64
+    %6 = arith.muli %0, %c32_i64_1 : i64
+    %7 = arith.index_cast %6 : i64 to index
+    %c0_2 = arith.constant 0 : index
+    %c32_3 = arith.constant 32 : index
+    %c32_4 = arith.constant 32 : index
+    %c1_5 = arith.constant 1 : index
+    %8 = arith.muli %arg5, %c1_5 : index
+    %9 = pto.make_tensor_view %arg3, shape = [%arg4, %arg5] strides = [%8, %c1_5] : !pto.tensor_view<?x?xf16>
+    %10 = pto.partition_view %9, offsets = [%7, %c0_2], sizes = [%c32_3, %c32_4] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<32x32xf16>
+    %c32_i64_6 = arith.constant 32 : i64
+    %11 = arith.muli %0, %c32_i64_6 : i64
+    %12 = arith.index_cast %11 : i64 to index
+    %c0_7 = arith.constant 0 : index
+    %c32_8 = arith.constant 32 : index
+    %c32_9 = arith.constant 32 : index
+    %c1_10 = arith.constant 1 : index
+    %13 = arith.muli %arg8, %c1_10 : index
+    %14 = pto.make_tensor_view %arg6, shape = [%arg7, %arg8] strides = [%13, %c1_10] : !pto.tensor_view<?x?xf16>
+    %15 = pto.partition_view %14, offsets = [%12, %c0_7], sizes = [%c32_8, %c32_9] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<32x32xf16>
+    %c0_i64 = arith.constant 0 : i64
+    %16 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %c0_i64_11 = arith.constant 0 : i64
+    %17 = pto.alloc_tile addr = %c0_i64_11 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %c0_i64_12 = arith.constant 0 : i64
+    %18 = pto.alloc_tile addr = %c0_i64_12 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tload ins(%5 : !pto.partition_tensor_view<32x32xf16>) outs(%16 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%10 : !pto.partition_tensor_view<32x32xf16>) outs(%17 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tadd ins(%16, %17 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%18 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tstore ins(%18 : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%15 : !pto.partition_tensor_view<32x32xf16>)
+    return
+  }
+}

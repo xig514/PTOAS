@@ -1,6 +1,9 @@
-"""@kernel decorator: signature parsing, Tensor flattening, and tracing."""
+"""@kernel decorator: signature parsing, Tensor flattening, tracing, and compilation."""
 
 import inspect
+import os
+import pathlib
+import subprocess
 
 from mlir.ir import InsertionPoint, IndexType, F32Type, IntegerType
 from mlir.dialects import func
@@ -8,27 +11,195 @@ from mlir.dialects import func
 from ._ir_builder import IRBuilder, set_builder, clear_builder
 from ._tensor import _TensorSpec, _TensorProxy
 from ._scalar import ScalarValue
+from ._metadata import MetaDataFunction
 
+
+# -- dtype name → C++ element type --
+_DTYPE_TO_CPP = {
+    "float16": "half",
+    "bfloat16": "__bf16",
+    "float32": "float",
+    "int8": "int8_t",
+    "int16": "int16_t",
+    "int32": "int32_t",
+    "int64": "int64_t",
+}
 
 class KernelFunction:
     """Wrapper returned by ``@pto.kernel``.
 
-    Calling the object traces the kernel and prints the generated MLIR.
+    Supports the full compilation pipeline:
+      emit_ir()  → PTO IR string
+      emit_cpp() → C++ source via ptoas
+      compile()  → shared library (.so) via bisheng
     """
 
-    def __init__(self, fn, name):
+    def __init__(self, fn, name, metadata=None):
         self._fn = fn
         self._name = name
+        # Support both dict and MetaDataFunction
+        if isinstance(metadata, MetaDataFunction):
+            self._metadata = metadata.get_static_metadata()
+            self._metadata_func = metadata
+        else:
+            self._metadata = metadata or {}
+            self._metadata_func = None
+        self._ir_cache = None
+        self._cpp_cache = None
+        self._lib_path = None
+        self._output_dir = None
+        self._param_specs = None  # saved from tracing
 
+
+    # -- IR Generation (existing, now cached) --
     def emit_ir(self):
-        """Trace the kernel and return the MLIR module as a string."""
-        builder = IRBuilder()
-        set_builder(builder)
-        try:
-            return self._trace(builder)
-        finally:
-            builder.close()
-            clear_builder()
+        """Trace the kernel and return the MLIR module as a string. Cached."""
+        if self._ir_cache is None:
+            builder = IRBuilder()
+            set_builder(builder)
+            try:
+                self._ir_cache = self._trace(builder)
+            finally:
+                builder.close()
+                clear_builder()
+        return self._ir_cache
+
+
+    # -- C++ Emission --
+    def emit_cpp(self, *, pto_level="level3", arch="a3"):
+        """IR → C++ via ptoas subprocess. Cached."""
+        if self._cpp_cache is not None:
+            return self._cpp_cache
+        ir = self.emit_ir()
+        out_dir = self._ensure_output_dir()
+        pto_path = out_dir / "kernel.pto"
+        cpp_path = out_dir / "kernel.cpp"
+        pto_path.write_text(ir, encoding="utf-8")
+        subprocess.run(
+            ["ptoas", str(pto_path),
+             f"--pto-level={pto_level}",
+             f"--pto-arch={arch}",
+             "-o", str(cpp_path)],
+            check=True,
+            cwd=str(out_dir),
+        )
+        self._cpp_cache = cpp_path.read_text(encoding="utf-8")
+        return self._cpp_cache
+
+
+    # -- Full Compilation --
+    def compile(self, *, pto_level="level3", arch="a3", npu_arch="dav-2201"):
+        if self._lib_path is not None and self._lib_path.exists():
+            return self
+        """IR → C++ → .so via ptoas + bisheng. Returns self."""
+        if self._lib_path and self._lib_path.exists():
+            return self
+        self.emit_cpp(pto_level=pto_level, arch=arch)
+        out_dir = self._ensure_output_dir()
+        caller_path = out_dir / "caller.cpp"
+        lib_path = out_dir / "kernel.so"
+
+        caller_path.write_text(
+            self._generate_caller_cpp("kernel.cpp"), encoding="utf-8"
+        )
+        self._compile_with_bisheng(caller_path, lib_path, npu_arch)
+        self._lib_path = lib_path
+        return self
+
+
+    # -- Print IR (original __call__ behavior) --
+    def __call__(self):
+        """Trace and print the IR to stdout."""
+        print(self.emit_ir())
+
+
+    # -- Properties --
+    @property
+    def library_path(self):
+        return str(self._lib_path) if self._lib_path else None
+
+
+    # -- Internal helpers --
+    def _ensure_output_dir(self):
+        if self._output_dir is None:
+            self._output_dir = pathlib.Path.cwd() / ".ptodsl_jit" / self._name
+        self._output_dir.mkdir(parents=True, exist_ok=True)
+        return self._output_dir
+
+
+    def _generate_caller_cpp(self, kernel_cpp_name):
+        """Generate extern "C" wrapper that calls the __global__ kernel."""
+        if self._param_specs is None:
+            raise RuntimeError("emit_ir() must be called before generating caller.")
+
+        cpp_params = []
+        kernel_args = []
+        for pname, spec in self._param_specs:
+            if isinstance(spec, _TensorSpec):
+                elem_cpp = _DTYPE_TO_CPP[spec.dtype.name]
+                cpp_params.append(f"uint8_t* {pname}")
+                kernel_args.append(f"({elem_cpp}*){pname}")
+                for d in range(spec.ndim):
+                    dim_name = f"{pname}_dim{d}"
+                    cpp_params.append(f"int32_t {dim_name}")
+                    kernel_args.append(dim_name)
+            elif spec == "index":
+                cpp_params.append(f"int32_t {pname}")
+                kernel_args.append(pname)
+            elif spec == "f32":
+                cpp_params.append(f"float {pname}")
+                kernel_args.append(pname)
+            elif spec == "i1":
+                cpp_params.append(f"int32_t {pname}")
+                kernel_args.append(pname)
+
+        sig = ", ".join(["uint32_t blockDim", "void* stream"] + cpp_params)
+        call_args = ", ".join(kernel_args)
+
+        return (
+            f'#if __CCE_AICORE__ == 220 && defined(__DAV_C220_VEC__)\n'
+            f'#include "{kernel_cpp_name}"\n'
+            f"#include <cstdint>\n\n"
+            f'extern "C" void call_kernel({sig})\n'
+            "{\n"
+            f"    {self._name}<<<blockDim, nullptr, stream>>>({call_args});\n"
+            "}\n"
+            f"#endif\n"
+        )
+
+    def _compile_with_bisheng(self, caller_path, lib_path, npu_arch):
+        """Invoke bisheng compiler: C++ → .so"""
+        toolkit_home = os.environ.get("ASCEND_TOOLKIT_HOME")
+        if not toolkit_home:
+            raise RuntimeError(
+                "ASCEND_TOOLKIT_HOME is required to compile generated caller.cpp."
+            )
+        cmd = [
+            "bisheng",
+            f"-I{toolkit_home}/include",
+            "-fPIC",
+            "-shared",
+            "-D_FORTIFY_SOURCE=2",
+            "-O2",
+            "-std=c++17",
+            "-Wno-macro-redefined",
+            "-Wno-ignored-attributes",
+            "-fstack-protector-strong",
+            "-xcce",
+            "-Xhost-start",
+            "-Xhost-end",
+            "-mllvm", "-cce-aicore-stack-size=0x8000",
+            "-mllvm", "-cce-aicore-function-stack-size=0x8000",
+            "-mllvm", "-cce-aicore-record-overflow=true",
+            "-mllvm", "-cce-aicore-addr-transform",
+            "-mllvm", "-cce-aicore-dcci-insert-for-scalar=false",
+            f"--npu-arch={npu_arch}",
+            "-DMEMORY_BASE",
+            "-std=gnu++17",
+            str(caller_path),
+            "-o", str(lib_path),
+        ]
+        subprocess.run(cmd, check=True, cwd=str(self._ensure_output_dir()))
 
     def _trace(self, builder):
         hints = {
@@ -36,7 +207,15 @@ class KernelFunction:
             for k, v in self._fn.__annotations__.items()
             if k != "return"
         }
-        params = list(inspect.signature(self._fn).parameters.keys())
+        sig = inspect.signature(self._fn)
+        # Only include positional parameters (not keyword-only metadata params)
+        params = [
+            name for name, p in sig.parameters.items()
+            if p.kind not in (
+                inspect.Parameter.KEYWORD_ONLY,
+                inspect.Parameter.VAR_KEYWORD,
+            )
+        ]
 
         # -- build flattened arg types --
         flat_types = []
@@ -63,6 +242,9 @@ class KernelFunction:
                 raise TypeError(
                     f"Unsupported annotation for parameter '{pname}': {spec!r}"
                 )
+
+        # Save param_specs for caller.cpp generation
+        self._param_specs = param_specs
 
         fn_type = func.FunctionType.get(flat_types, [])
 
@@ -98,25 +280,40 @@ class KernelFunction:
 
         # -- trace user function --
         with InsertionPoint(entry):
-            self._fn(*proxy_args)
+            # If metadata comes from MetaDataFunction, don't pass as kwargs
+            if self._metadata_func is not None:
+                self._fn(*proxy_args)
+            else:
+                self._fn(*proxy_args, **self._metadata)
             func.ReturnOp([])
 
         return builder.emit_ir()
 
-    def __call__(self):
-        """Trace and print the IR to stdout."""
-        print(self.emit_ir())
 
-
-def kernel(fn):
+def kernel(fn=None, *, metadata=None):
     """Decorator that turns a Python function into a PTO kernel.
 
     Usage::
 
+        # Simple usage:
         @pto.kernel
         def vector_add(x: pto.Tensor(pto.float16, 2), ...):
             ...
 
-        vector_add()  # prints MLIR to stdout
+        # With compile-time metadata:
+        @pto.kernel(metadata={"phys_row": 128, "phys_col": 64})
+        def my_kernel(src: pto.Tensor(pto.float32, 2), *, phys_row, phys_col):
+            tile = pto.make_tile((phys_row, phys_col), ...)
+
+        vector_add()          # prints MLIR to stdout
+        vector_add.emit_ir()  # returns IR string
+        vector_add.emit_cpp() # returns C++ string (via ptoas)
+        vector_add.compile()  # compiles to .so (via bisheng)
     """
-    return KernelFunction(fn, fn.__name__)
+    if fn is not None:
+        # Called as @pto.kernel (no parentheses)
+        return KernelFunction(fn, fn.__name__)
+    # Called as @pto.kernel(...) (with parentheses)
+    def decorator(fn):
+        return KernelFunction(fn, fn.__name__, metadata=metadata)
+    return decorator
