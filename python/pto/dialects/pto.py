@@ -79,6 +79,8 @@ __all__ = [
     "TileConfig",
     # High-level sync helpers
     "record_event", "wait_event", "barrier",
+    # A5 buffer-id sync helpers
+    "get_buf", "rls_buf",
     # Scalar pointer helpers
     "load_scalar", "store_scalar"
 
@@ -119,6 +121,28 @@ def _ensure_event_attr(val, ctx):
         return EventAttr.get(enum_val, ctx)
     return val
 
+def _ensure_pipe_attr(val, ctx):
+    if isinstance(val, PipeAttr):
+        return val
+    if isinstance(val, PIPE):
+        return PipeAttr.get(val, ctx)
+    if isinstance(val, str):
+        name = val.upper()
+        try:
+            enum_val = getattr(PIPE, name)
+        except AttributeError:
+            raise ValueError(f"Unknown PIPE name: {val}")
+        return PipeAttr.get(enum_val, ctx)
+    return val
+
+def _ensure_i32_attr(val, name, ctx):
+    if isinstance(val, _ods_ir.IntegerAttr):
+        return val
+    if isinstance(val, int):
+        i32 = _ods_ir.IntegerType.get_signless(32, ctx)
+        return _ods_ir.IntegerAttr.get(i32, val)
+    raise TypeError(f"{name} must be int or IntegerAttr, got {type(val).__name__}")
+
 def record_event(src_op, dst_op, event_id, *, loc=None, ip=None):
     ctx = loc.context if loc else _ods_ir.Context.current
     return _pto_ops_gen.record_event(
@@ -143,6 +167,38 @@ def barrier(op, *, loc=None, ip=None):
         return _pto_ops_gen.barrier_sync(op_attr, loc=loc, ip=ip)
     # Otherwise fall back to low-level barrier expecting PipeAttr
     return _pto_ops_gen.barrier(op, loc=loc, ip=ip)
+
+# -----------------------------------------------------------------------------
+# A5 buffer-id sync helpers
+# -----------------------------------------------------------------------------
+def get_buf(pipe, buf_id, mode=0, *, loc=None, ip=None):
+    ctx = loc.context if loc else _ods_ir.Context.current
+    attrs = {
+        "pipe": _ensure_pipe_attr(pipe, ctx),
+        "buf_id": _ensure_i32_attr(buf_id, "buf_id", ctx),
+        "mode": _ensure_i32_attr(mode, "mode", ctx),
+    }
+    return _ods_ir.Operation.create(
+        "pto.get_buf",
+        attributes=attrs,
+        loc=loc,
+        ip=ip,
+    )
+
+
+def rls_buf(pipe, buf_id, mode=0, *, loc=None, ip=None):
+    ctx = loc.context if loc else _ods_ir.Context.current
+    attrs = {
+        "pipe": _ensure_pipe_attr(pipe, ctx),
+        "buf_id": _ensure_i32_attr(buf_id, "buf_id", ctx),
+        "mode": _ensure_i32_attr(mode, "mode", ctx),
+    }
+    return _ods_ir.Operation.create(
+        "pto.rls_buf",
+        attributes=attrs,
+        loc=loc,
+        ip=ip,
+    )
 
 # -----------------------------------------------------------------------------
 # Scalar pointer helpers (manual wrappers until python ops are regenerated)
