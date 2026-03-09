@@ -7,17 +7,20 @@ from mlir.dialects import arith
 def ensure_index_ssa(val):
     """Convert *val* to an SSA index value.
 
-    Handles ints, ScalarValues, and raw SSA values.  If the underlying
+    Handles ints, ScalarValues, DynVars, and raw SSA values.  If the underlying
     SSA value is not already ``index``-typed (e.g. ``i64`` from
     ``get_block_idx``), an ``arith.index_cast`` is inserted automatically.
     """
     from ._ir_builder import get_builder
     from ._scalar import ScalarValue
+    from ._dynvar import DynVar
     from mlir.ir import IndexType
 
     if isinstance(val, int):
         return get_builder().constant_index(val)
-    if isinstance(val, ScalarValue):
+    if isinstance(val, DynVar):
+        val = val._require_bound().ssa
+    elif isinstance(val, ScalarValue):
         val = val.ssa
     # val is now a raw SSA value — cast to index if needed
     idx_ty = IndexType.get()

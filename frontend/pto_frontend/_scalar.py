@@ -17,6 +17,9 @@ class ScalarValue:
     def _coerce(self, other):
         if isinstance(other, ScalarValue):
             return other.ssa
+        from ._dynvar import DynVar
+        if isinstance(other, DynVar):
+            return other._require_bound().ssa
         from ._ir_builder import get_builder
 
         if isinstance(other, int):
