@@ -9,16 +9,47 @@ class _TensorSpec:
         self.ndim = ndim
 
 
-def Tensor(dtype, ndim):
-    """Create a Tensor type annotation for a kernel parameter.
+class _TensorShapeSpec:
+    """Annotation object returned by ``Tensor[[M, N], dtype]``.
 
-    Usage::
-
-        @pto.kernel
-        def my_kernel(x: pto.Tensor(pto.float16, 2), ...):
-            ...
+    *shape* is a list of ``int`` (static) or :class:`DynVar` (dynamic).
     """
-    return _TensorSpec(dtype, ndim)
+
+    def __init__(self, shape, dtype):
+        self.shape = list(shape)
+        self.dtype = dtype
+        self.ndim = len(shape)
+
+
+class Tensor:
+    """Tensor type annotation factory.
+
+    Two forms are supported::
+
+        # Legacy: specify dtype and rank only
+        Tensor(pto.float16, 2)          -> _TensorSpec
+
+        # New: specify shape (int or DynVar) and dtype
+        Tensor[[M, N], pto.float16]     -> _TensorShapeSpec
+    """
+
+    def __new__(cls, dtype, ndim):
+        """Legacy call syntax: ``Tensor(dtype, ndim)``."""
+        return _TensorSpec(dtype, ndim)
+
+    def __class_getitem__(cls, item):
+        """Subscript syntax: ``Tensor[[M, N], dtype]``."""
+        if not isinstance(item, tuple) or len(item) != 2:
+            raise TypeError(
+                "Tensor[...] requires exactly two arguments: "
+                "Tensor[[shape...], dtype]"
+            )
+        shape, dtype = item
+        if not isinstance(shape, (list, tuple)):
+            raise TypeError(
+                f"Tensor shape must be a list or tuple, got {type(shape).__name__}"
+            )
+        return _TensorShapeSpec(shape, dtype)
 
 
 class _PartitionView:

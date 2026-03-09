@@ -9,9 +9,9 @@ from mlir.ir import InsertionPoint, IndexType, F32Type, IntegerType
 from mlir.dialects import func
 
 from ._ir_builder import IRBuilder, set_builder, clear_builder
-from ._tensor import _TensorSpec, _TensorProxy
+from ._tensor import _TensorSpec, _TensorShapeSpec, _TensorProxy
+from ._dynvar import DynVar
 from ._scalar import ScalarValue
-from ._metadata import MetaDataFunction
 
 
 # -- dtype name → C++ element type --
@@ -34,16 +34,9 @@ class KernelFunction:
       compile()  → shared library (.so) via bisheng
     """
 
-    def __init__(self, fn, name, metadata=None):
+    def __init__(self, fn, name):
         self._fn = fn
         self._name = name
-        # Support both dict and MetaDataFunction
-        if isinstance(metadata, MetaDataFunction):
-            self._metadata = metadata.get_static_metadata()
-            self._metadata_func = metadata
-        else:
-            self._metadata = metadata or {}
-            self._metadata_func = None
         self._ir_cache = None
         self._cpp_cache = None
         self._lib_path = None
@@ -135,7 +128,7 @@ class KernelFunction:
         cpp_params = []
         kernel_args = []
         for pname, spec in self._param_specs:
-            if isinstance(spec, _TensorSpec):
+            if isinstance(spec, (_TensorSpec, _TensorShapeSpec)):
                 elem_cpp = _DTYPE_TO_CPP[spec.dtype.name]
                 cpp_params.append(f"uint8_t* {pname}")
                 kernel_args.append(f"({elem_cpp}*){pname}")
@@ -208,7 +201,7 @@ class KernelFunction:
             if k != "return"
         }
         sig = inspect.signature(self._fn)
-        # Only include positional parameters (not keyword-only metadata params)
+        # Only include positional parameters
         params = [
             name for name, p in sig.parameters.items()
             if p.kind not in (
@@ -222,7 +215,7 @@ class KernelFunction:
         param_specs = []  # (param_name, spec_or_tag)
         for pname in params:
             spec = hints.get(pname)
-            if isinstance(spec, _TensorSpec):
+            if isinstance(spec, (_TensorSpec, _TensorShapeSpec)):
                 from mlir.dialects import pto as _pto
 
                 flat_types.append(_pto.PtrType.get(spec.dtype.to_mlir()))
@@ -256,14 +249,22 @@ class KernelFunction:
         # -- reconstruct proxy objects from block args --
         block_args = list(entry.arguments)
         proxy_args = []
+        dynvars_to_unbind = []  # track DynVars for cleanup
         idx = 0
         for _pname, spec in param_specs:
-            if isinstance(spec, _TensorSpec):
+            if isinstance(spec, (_TensorSpec, _TensorShapeSpec)):
                 ptr_ssa = block_args[idx]
                 idx += 1
                 shape_ssas = []
-                for _ in range(spec.ndim):
-                    shape_ssas.append(block_args[idx])
+                for d in range(spec.ndim):
+                    dim_ssa = block_args[idx]
+                    shape_ssas.append(dim_ssa)
+                    # Bind DynVar (first occurrence wins)
+                    if isinstance(spec, _TensorShapeSpec):
+                        dim_spec = spec.shape[d]
+                        if isinstance(dim_spec, DynVar) and not dim_spec.is_bound:
+                            dim_spec._bind(ScalarValue(dim_ssa))
+                            dynvars_to_unbind.append(dim_spec)
                     idx += 1
                 proxy_args.append(
                     _TensorProxy(ptr_ssa, shape_ssas, spec.dtype, spec.ndim)
@@ -279,18 +280,19 @@ class KernelFunction:
                 idx += 1
 
         # -- trace user function --
-        with InsertionPoint(entry):
-            # If metadata comes from MetaDataFunction, don't pass as kwargs
-            if self._metadata_func is not None:
+        try:
+            with InsertionPoint(entry):
                 self._fn(*proxy_args)
-            else:
-                self._fn(*proxy_args, **self._metadata)
-            func.ReturnOp([])
+                func.ReturnOp([])
+        finally:
+            # Always unbind DynVars to prevent stale bindings
+            for dv in dynvars_to_unbind:
+                dv._unbind()
 
         return builder.emit_ir()
 
 
-def kernel(fn=None, *, metadata=None):
+def kernel(fn=None):
     """Decorator that turns a Python function into a PTO kernel.
 
     Usage::
@@ -299,11 +301,6 @@ def kernel(fn=None, *, metadata=None):
         @pto.kernel
         def vector_add(x: pto.Tensor(pto.float16, 2), ...):
             ...
-
-        # With compile-time metadata:
-        @pto.kernel(metadata={"phys_row": 128, "phys_col": 64})
-        def my_kernel(src: pto.Tensor(pto.float32, 2), *, phys_row, phys_col):
-            tile = pto.make_tile((phys_row, phys_col), ...)
 
         vector_add()          # prints MLIR to stdout
         vector_add.emit_ir()  # returns IR string
@@ -315,5 +312,5 @@ def kernel(fn=None, *, metadata=None):
         return KernelFunction(fn, fn.__name__)
     # Called as @pto.kernel(...) (with parentheses)
     def decorator(fn):
-        return KernelFunction(fn, fn.__name__, metadata=metadata)
+        return KernelFunction(fn, fn.__name__)
     return decorator

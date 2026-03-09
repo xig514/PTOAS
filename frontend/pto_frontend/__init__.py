@@ -19,6 +19,9 @@ from ._dtypes import DType, float16, float32, bfloat16, int8, int16, int32, int6
 # -- tensor annotation --
 from ._tensor import Tensor
 
+# -- dynamic shape variable --
+from ._dynvar import DynVar
+
 # -- kernel decorator --
 from ._kernel import kernel
 
@@ -54,9 +57,6 @@ from ._ops import (
 
 # -- jit decorator --
 from .jit import jit
-
-# -- metadata decorator --
-from ._metadata import pto_meta_data
 
 # -- control flow --
 from ._control_flow import for_range, if_

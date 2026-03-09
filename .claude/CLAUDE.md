@@ -19,27 +19,10 @@ When you change any user-visible behavior, keep these layers synchronized:
 - `test/samples/TiledTensor/LAYOUT_V2_DESIGN.md` - design of the TileLayout
 
 ## Build Commands
-### Full configure
+### Full configure, compile，build, install
 ```bash
-export WORKSPACE_DIR=/home/code/ptoas/
-export PTO_SOURCE_DIR=$WORKSPACE_DIR/PTOAS
-export PTO_INSTALL_DIR=$PTO_SOURCE_DIR/install
-
-export LLVM_SOURCE_DIR=/home/pkg/mlir/llvm-project
-export LLVM_BUILD_DIR=$LLVM_SOURCE_DIR/build-shared
-
-cmake -G Ninja -S . -B build -DLLVM_DIR=$LLVM_BUILD_DIR/lib/cmake/llvm -DMLIR_DIR=$LLVM_BUILD_DIR/lib/cmake/mlir -DPython3_EXECUTABLE=$(which python3) -DPython3_FIND_STRATEGY=LOCATION -Dpybind11_DIR="${PYBIND11_CMAKE_DIR}" -DMLIR_ENABLE_BINDINGS_PYTHON=ON -DMLIR_PYTHON_PACKAGE_DIR=$LLVM_BUILD_DIR/tools/mlir/python_packages/mlir_core -DCMAKE_INSTALL_PREFIX="$PTO_INSTALL_DIR"
-
-ninja -C build -j4
-ninja -C build install
-
-export MLIR_PYTHON_ROOT=$LLVM_BUILD_DIR/tools/mlir/python_packages/mlir_core
-export PTO_PYTHON_ROOT=$PTO_INSTALL_DIR/
-export PYTHONPATH=$MLIR_PYTHON_ROOT:$PTO_PYTHON_ROOT:$PYTHONPATH
-export LD_LIBRARY_PATH=$LLVM_BUILD_DIR/lib:$PTO_INSTALL_DIR/lib:$LD_LIBRARY_PATH
-export PATH=$PTO_SOURCE_DIR/build/tools/ptoas:$PATH
-source /usr/local/Ascend/ascend-toolkit/latest/bin/setenv.bash
-export ASCEND_TOOLKIT_HOME=/usr/local/Ascend/ascend-toolkit/latest
+export HOME=/data/g00895580
+bash compile.sh
 ```
 
 ## Test Commands
@@ -62,3 +45,5 @@ ptoas a.pto --pto-level=level3
 - Create a new directory for all new code and donot contaminate original code. (If there is some bug in original code, it's ok to fix it). Supply compile and install scripts to install the dialect.
 - The frontend representation must offer strong ergonomics and high expressiveness.
 - ptoas command needs to add argument "--pto-level=level3"
+- Temp files should be put in /data/g00895580/tmp
+- 
