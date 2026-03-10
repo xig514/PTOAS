@@ -37,10 +37,10 @@ def layout_even_split(
     with tiled.for_each() as coord:
         # coord is TileCoordinate (tile_i, tile_j)
         # Load tile at coordinate
-        pto.tload_tile(tensor, coord, tile_layout, tile_buf)
+        pto.tload_tile(tile_buf, tensor, coord, tile_layout)
 
         # Store tile to output
-        pto.tstore_tile(tile_buf, out, coord, tile_layout)
+        pto.tstore_tile(out, tile_buf, coord, tile_layout)
 
 
 @pto.kernel
@@ -59,8 +59,8 @@ def layout_sequential_split(
     tile_buf = pto.make_tile((32, 64), pto.float32, pto.VEC, addr=0)
 
     with tiled.for_each() as coord:
-        pto.tload_tile(tensor, coord, tile_layout, tile_buf)
-        pto.tstore_tile(tile_buf, out, coord, tile_layout)
+        pto.tload_tile(tile_buf, tensor, coord, tile_layout)
+        pto.tstore_tile(out, tile_buf, coord, tile_layout)
 
 
 if __name__ == "__main__":

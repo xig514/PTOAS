@@ -61,9 +61,9 @@ def dynamic_add_kernel(
                                sizes=[TILE_M, TILE_N])
 
             # Load -> Add -> Store
-            pto.tload(pv_x, tile_a)
-            pto.tload(pv_y, tile_b)
-            pto.tadd(tile_a, tile_b, tile_c)
+            pto.tload(tile_a, pv_x)
+            pto.tload(tile_b, pv_y)
+            pto.tadd(tile_c, tile_a, tile_b)
             pto.tstore(pv_z, tile_c)
 
 

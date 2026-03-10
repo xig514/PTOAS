@@ -32,13 +32,13 @@ def tiled_scalar_ops(
     with x_tiled.for_each() as (i, x_view):
         z_view = z_tiled[i]
 
-        pto.tload(x_view, tile_x)
+        pto.tload(tile_x, x_view)
 
         # Scalar operations chain: scale, shift, clamp
-        pto.tmuls(tile_x, 0.125, tile_y)    # scale by 1/sqrt(64)
-        pto.tadds(tile_y, 1.0, tile_y)      # add bias
-        pto.tmaxs(tile_y, 0.0, tile_z)      # clamp lower bound (ReLU-like)
-        pto.tmins(tile_z, 6.0, tile_z)      # clamp upper bound (ReLU6)
+        pto.tmuls(tile_y, tile_x, 0.125)    # scale by 1/sqrt(64)
+        pto.tadds(tile_y, tile_y, 1.0)      # add bias
+        pto.tmaxs(tile_z, tile_y, 0.0)      # clamp lower bound (ReLU-like)
+        pto.tmins(tile_z, tile_z, 6.0)      # clamp upper bound (ReLU6)
 
         pto.tstore(z_view, tile_z)
 
@@ -63,16 +63,16 @@ def tiled_unary_ops(
     with x_tiled.for_each() as (i, x_view):
         z_view = z_tiled[i]
 
-        pto.tload(x_view, tile_a)
+        pto.tload(tile_a, x_view)
 
         # Unary ops chain
-        pto.tabs(tile_a, tile_b)      # abs
-        pto.tsqrt(tile_b, tile_c)     # sqrt(abs(x))
-        pto.trecip(tile_c, tile_b)    # 1/sqrt(abs(x))
-        pto.texp(tile_a, tile_c)      # exp(x)
+        pto.tabs(tile_b, tile_a)      # abs
+        pto.tsqrt(tile_c, tile_b)     # sqrt(abs(x))
+        pto.trecip(tile_b, tile_c)    # 1/sqrt(abs(x))
+        pto.texp(tile_c, tile_a)      # exp(x)
         pto.tlog(tile_c, tile_c)      # log(exp(x)) = x
-        pto.tneg(tile_c, tile_b)      # -x
-        pto.trelu(tile_b, tile_c)     # relu(-x) = 0 for positive x
+        pto.tneg(tile_b, tile_c)      # -x
+        pto.trelu(tile_c, tile_b)     # relu(-x) = 0 for positive x
 
         pto.tstore(z_view, tile_c)
 

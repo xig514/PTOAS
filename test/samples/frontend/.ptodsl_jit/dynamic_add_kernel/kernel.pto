@@ -1,0 +1,65 @@
+module {
+  func.func @dynamic_add_kernel(%arg0: !pto.ptr<f16>, %arg1: index, %arg2: index, %arg3: !pto.ptr<f16>, %arg4: index, %arg5: index, %arg6: !pto.ptr<f16>, %arg7: index, %arg8: index) {
+    pto.section.vector {
+      %c0_i64 = arith.constant 0 : i64
+      %0 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=128, v_row=64, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %c16384_i64 = arith.constant 16384 : i64
+      %1 = pto.alloc_tile addr = %c16384_i64 : !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=128, v_row=64, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %c32768_i64 = arith.constant 32768 : i64
+      %2 = pto.alloc_tile addr = %c32768_i64 : !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=128, v_row=64, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %c63 = arith.constant 63 : index
+      %3 = arith.addi %arg1, %c63 : index
+      %c64 = arith.constant 64 : index
+      %4 = arith.divsi %3, %c64 : index
+      %c127 = arith.constant 127 : index
+      %5 = arith.addi %arg2, %c127 : index
+      %c128 = arith.constant 128 : index
+      %6 = arith.divsi %5, %c128 : index
+      pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID1>]
+      pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID2>]
+      %c0 = arith.constant 0 : index
+      %c1 = arith.constant 1 : index
+      scf.for %arg9 = %c0 to %4 step %c1 {
+        %c0_0 = arith.constant 0 : index
+        %c1_1 = arith.constant 1 : index
+        scf.for %arg10 = %c0_0 to %6 step %c1_1 {
+          %c64_2 = arith.constant 64 : index
+          %7 = arith.muli %arg9, %c64_2 : index
+          %c128_3 = arith.constant 128 : index
+          %8 = arith.muli %arg10, %c128_3 : index
+          %c64_4 = arith.constant 64 : index
+          %c128_5 = arith.constant 128 : index
+          %c1_6 = arith.constant 1 : index
+          %9 = arith.muli %arg2, %c1_6 : index
+          %10 = pto.make_tensor_view %arg0, shape = [%arg1, %arg2] strides = [%9, %c1_6] : !pto.tensor_view<?x?xf16>
+          %11 = pto.partition_view %10, offsets = [%7, %8], sizes = [%c64_4, %c128_5] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<64x128xf16>
+          %c64_7 = arith.constant 64 : index
+          %c128_8 = arith.constant 128 : index
+          %c1_9 = arith.constant 1 : index
+          %12 = arith.muli %arg5, %c1_9 : index
+          %13 = pto.make_tensor_view %arg3, shape = [%arg4, %arg5] strides = [%12, %c1_9] : !pto.tensor_view<?x?xf16>
+          %14 = pto.partition_view %13, offsets = [%7, %8], sizes = [%c64_7, %c128_8] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<64x128xf16>
+          %c64_10 = arith.constant 64 : index
+          %c128_11 = arith.constant 128 : index
+          %c1_12 = arith.constant 1 : index
+          %15 = arith.muli %arg8, %c1_12 : index
+          %16 = pto.make_tensor_view %arg6, shape = [%arg7, %arg8] strides = [%15, %c1_12] : !pto.tensor_view<?x?xf16>
+          %17 = pto.partition_view %16, offsets = [%7, %8], sizes = [%c64_10, %c128_11] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<64x128xf16>
+          pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID2>]
+          pto.tload ins(%11 : !pto.partition_tensor_view<64x128xf16>) outs(%0 : !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=128, v_row=64, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+          pto.tload ins(%14 : !pto.partition_tensor_view<64x128xf16>) outs(%1 : !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=128, v_row=64, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+          pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+          pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+          pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID1>]
+          pto.tadd ins(%0, %1 : !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=128, v_row=64, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=128, v_row=64, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%2 : !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=128, v_row=64, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+          pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID2>]
+          pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+          pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+          pto.tstore ins(%2 : !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=128, v_row=64, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%17 : !pto.partition_tensor_view<64x128xf16>)
+          pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID1>]
+        }
+      }
+    }
+    return
+  }
+}

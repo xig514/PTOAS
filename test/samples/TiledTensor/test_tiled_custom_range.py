@@ -29,8 +29,8 @@ def custom_range_add(
 
     with x_tiled.for_each(start=start, end=end) as (i, x_view):
         z_view = z_tiled[i]
-        pto.tload(x_view, tile_x)
-        pto.tadd(tile_x, tile_x, tile_z)
+        pto.tload(tile_x, x_view)
+        pto.tadd(tile_z, tile_x, tile_x)
         pto.tstore(z_view, tile_z)
 
 

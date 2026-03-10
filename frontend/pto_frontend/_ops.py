@@ -2,6 +2,8 @@
 
 Each function creates the underlying MLIR op at the current insertion point
 and works with Tile / _PartitionView / ScalarValue proxies.
+
+Convention: destination operand first, source operand(s) after.
 """
 
 from mlir.dialects import pto as _pto
@@ -90,10 +92,10 @@ def make_tile(shape, dtype, loc, addr=0, *,
 
 
 # ---------------------------------------------------------------------------
-#  DMA ops  (first arg = None for result-type override)
+#  DMA ops  (dst, src)
 # ---------------------------------------------------------------------------
 
-def tload(pv, tile):
+def tload(tile, pv):
     """Load from a partition view into a tile buffer."""
     _pto.TLoadOp(None, pv.ssa, tile.ssa)
 
@@ -103,140 +105,140 @@ def tstore(pv, tile):
     _pto.TStoreOp(None, tile.ssa, pv.ssa)
 
 
-def tload_tile(tensor, tile_coord, tile_layout, tile_buf):
+def tload_tile(tile_buf, tensor, tile_coord, tile_layout):
     """Load data from tensor at tile coordinate into tile buffer.
 
     Parameters
     ----------
+    tile_buf : Tile
+        Destination tile buffer
     tensor : _TensorProxy
         Source tensor
     tile_coord : TileCoordinate
         Coordinate of the tile to load
     tile_layout : TileLayout
         Layout of the tile
-    tile_buf : Tile
-        Destination tile buffer
     """
     pv = tensor.partition_at_coord(tile_coord, tile_layout)
     _pto.TLoadOp(None, pv.ssa, tile_buf.ssa)
 
 
-def tstore_tile(tile_buf, tensor, tile_coord, tile_layout):
+def tstore_tile(pv_tensor, tile_buf, tile_coord, tile_layout):
     """Store tile buffer data back to tensor at tile coordinate.
 
     Parameters
     ----------
+    pv_tensor : _TensorProxy
+        Destination tensor
     tile_buf : Tile
         Source tile buffer
-    tensor : _TensorProxy
-        Destination tensor
     tile_coord : TileCoordinate
         Coordinate of the tile to store
     tile_layout : TileLayout
         Layout of the tile
     """
-    pv = tensor.partition_at_coord(tile_coord, tile_layout)
+    pv = pv_tensor.partition_at_coord(tile_coord, tile_layout)
     _pto.TStoreOp(None, tile_buf.ssa, pv.ssa)
 
 
-def tmov(src, dst):
+def tmov(dst, src):
     """Move data between tile buffers (possibly across address spaces)."""
     _pto.TMovOp(None, src.ssa, dst.ssa)
 
 
 # ---------------------------------------------------------------------------
-#  Binary element-wise ops  (src0, src1, dst — no None prefix)
+#  Binary element-wise ops  (dst, src0, src1)
 # ---------------------------------------------------------------------------
 
-def _binary(op_cls, a, b, c):
-    op_cls(a.ssa, b.ssa, c.ssa)
+def _binary(op_cls, dst, src0, src1):
+    op_cls(src0.ssa, src1.ssa, dst.ssa)
 
 
-def tadd(src0, src1, dst):
-    _binary(_pto.TAddOp, src0, src1, dst)
+def tadd(dst, src0, src1):
+    _binary(_pto.TAddOp, dst, src0, src1)
 
 
-def tsub(src0, src1, dst):
-    _binary(_pto.TSubOp, src0, src1, dst)
+def tsub(dst, src0, src1):
+    _binary(_pto.TSubOp, dst, src0, src1)
 
 
-def tmul(src0, src1, dst):
-    _binary(_pto.TMulOp, src0, src1, dst)
+def tmul(dst, src0, src1):
+    _binary(_pto.TMulOp, dst, src0, src1)
 
 
-def tdiv(src0, src1, dst):
-    _binary(_pto.TDivOp, src0, src1, dst)
+def tdiv(dst, src0, src1):
+    _binary(_pto.TDivOp, dst, src0, src1)
 
 
-def tand(src0, src1, dst):
-    _binary(_pto.TAndOp, src0, src1, dst)
+def tand(dst, src0, src1):
+    _binary(_pto.TAndOp, dst, src0, src1)
 
 
-def tor(src0, src1, dst):
-    _binary(_pto.TOrOp, src0, src1, dst)
+def tor(dst, src0, src1):
+    _binary(_pto.TOrOp, dst, src0, src1)
 
 
-def txor(src0, src1, dst):
-    _binary(_pto.TXorOp, src0, src1, dst)
+def txor(dst, src0, src1):
+    _binary(_pto.TXorOp, dst, src0, src1)
 
 
-def tmax(src0, src1, dst):
-    _binary(_pto.TMaxOp, src0, src1, dst)
+def tmax(dst, src0, src1):
+    _binary(_pto.TMaxOp, dst, src0, src1)
 
 
-def tmin(src0, src1, dst):
-    _binary(_pto.TMinOp, src0, src1, dst)
+def tmin(dst, src0, src1):
+    _binary(_pto.TMinOp, dst, src0, src1)
 
 
 # ---------------------------------------------------------------------------
-#  Unary element-wise ops  (src, dst)
+#  Unary element-wise ops  (dst, src)
 # ---------------------------------------------------------------------------
 
-def _unary(op_cls, src, dst):
+def _unary(op_cls, dst, src):
     op_cls(src.ssa, dst.ssa)
 
 
-def texp(src, dst):
-    _unary(_pto.TExpOp, src, dst)
+def texp(dst, src):
+    _unary(_pto.TExpOp, dst, src)
 
 
-def tlog(src, dst):
-    _unary(_pto.TLogOp, src, dst)
+def tlog(dst, src):
+    _unary(_pto.TLogOp, dst, src)
 
 
-def tsqrt(src, dst):
-    _unary(_pto.TSqrtOp, src, dst)
+def tsqrt(dst, src):
+    _unary(_pto.TSqrtOp, dst, src)
 
 
-def trsqrt(src, dst):
-    _unary(_pto.TRsqrtOp, src, dst)
+def trsqrt(dst, src):
+    _unary(_pto.TRsqrtOp, dst, src)
 
 
-def trecip(src, dst):
-    _unary(_pto.TRecipOp, src, dst)
+def trecip(dst, src):
+    _unary(_pto.TRecipOp, dst, src)
 
 
-def tneg(src, dst):
-    _unary(_pto.TNegOp, src, dst)
+def tneg(dst, src):
+    _unary(_pto.TNegOp, dst, src)
 
 
-def tnot(src, dst):
-    _unary(_pto.TNotOp, src, dst)
+def tnot(dst, src):
+    _unary(_pto.TNotOp, dst, src)
 
 
-def trelu(src, dst):
-    _unary(_pto.TReluOp, src, dst)
+def trelu(dst, src):
+    _unary(_pto.TReluOp, dst, src)
 
 
-def tabs(src, dst):
-    _unary(_pto.TAbsOp, src, dst)
+def tabs(dst, src):
+    _unary(_pto.TAbsOp, dst, src)
 
 
 # ---------------------------------------------------------------------------
-#  Tile-scalar ops  (src, scalar, dst)
+#  Tile-scalar ops  (dst, src, scalar)
 # ---------------------------------------------------------------------------
 
-def _scalar_op(op_cls, src, scalar, dst):
+def _scalar_op(op_cls, dst, src, scalar):
     from ._utils import make_scalar_constant
 
     if isinstance(scalar, (int, float)):
@@ -248,71 +250,71 @@ def _scalar_op(op_cls, src, scalar, dst):
     op_cls(src.ssa, scalar_ssa, dst.ssa)
 
 
-def tadds(src, scalar, dst):
-    _scalar_op(_pto.TAddSOp, src, scalar, dst)
+def tadds(dst, src, scalar):
+    _scalar_op(_pto.TAddSOp, dst, src, scalar)
 
 
-def tsubs(src, scalar, dst):
-    _scalar_op(_pto.TSubSOp, src, scalar, dst)
+def tsubs(dst, src, scalar):
+    _scalar_op(_pto.TSubSOp, dst, src, scalar)
 
 
-def tmuls(src, scalar, dst):
-    _scalar_op(_pto.TMulSOp, src, scalar, dst)
+def tmuls(dst, src, scalar):
+    _scalar_op(_pto.TMulSOp, dst, src, scalar)
 
 
-def tdivs(src, scalar, dst):
-    _scalar_op(_pto.TDivSOp, src, scalar, dst)
+def tdivs(dst, src, scalar):
+    _scalar_op(_pto.TDivSOp, dst, src, scalar)
 
 
-def tmaxs(src, scalar, dst):
-    _scalar_op(_pto.TMaxSOp, src, scalar, dst)
+def tmaxs(dst, src, scalar):
+    _scalar_op(_pto.TMaxSOp, dst, src, scalar)
 
 
-def tmins(src, scalar, dst):
-    _scalar_op(_pto.TMinSOp, src, scalar, dst)
+def tmins(dst, src, scalar):
+    _scalar_op(_pto.TMinSOp, dst, src, scalar)
 
 
 # ---------------------------------------------------------------------------
-#  Reduction ops  (src, tmp, dst)
+#  Reduction ops  (dst, src, tmp)
 # ---------------------------------------------------------------------------
 
-def trowmax(src, tmp, dst):
+def trowmax(dst, src, tmp):
     _pto.TRowMaxOp(src.ssa, tmp.ssa, dst.ssa)
 
 
-def trowmin(src, tmp, dst):
+def trowmin(dst, src, tmp):
     _pto.TRowMinOp(src.ssa, tmp.ssa, dst.ssa)
 
 
-def trowsum(src, tmp, dst):
+def trowsum(dst, src, tmp):
     _pto.TRowSumOp(src.ssa, tmp.ssa, dst.ssa)
 
 
-def tcolmax(src, tmp, dst):
+def tcolmax(dst, src, tmp):
     _pto.TColMaxOp(src.ssa, tmp.ssa, dst.ssa)
 
 
-def tcolmin(src, tmp, dst):
+def tcolmin(dst, src, tmp):
     _pto.TColMinOp(src.ssa, tmp.ssa, dst.ssa)
 
 
-def tcolsum(src, tmp, dst):
+def tcolsum(dst, src, tmp):
     _pto.TColSumOp(src.ssa, tmp.ssa, dst.ssa)
 
 
 # ---------------------------------------------------------------------------
-#  Matrix-multiplication ops  (None prefix)
+#  Matrix-multiplication ops  (dst, ...)
 # ---------------------------------------------------------------------------
 
-def tmatmul(lhs, rhs, dst):
+def tmatmul(dst, lhs, rhs):
     _pto.TMatmulOp(None, lhs.ssa, rhs.ssa, dst.ssa)
 
 
-def tmatmul_acc(acc, lhs, rhs, dst):
+def tmatmul_acc(dst, acc, lhs, rhs):
     _pto.TMatmulAccOp(None, acc.ssa, lhs.ssa, rhs.ssa, dst.ssa)
 
 
-def tmatmul_bias(lhs, rhs, bias, dst):
+def tmatmul_bias(dst, lhs, rhs, bias):
     _pto.TMatmulBiasOp(None, lhs.ssa, rhs.ssa, bias.ssa, dst.ssa)
 
 
@@ -320,31 +322,31 @@ def tmatmul_bias(lhs, rhs, bias, dst):
 #  Data movement / layout
 # ---------------------------------------------------------------------------
 
-def ttrans(src, dst):
+def ttrans(dst, src):
     """Transpose a tile into *dst* using an implementation-defined temporary."""
     _pto.TTransOp(src.ssa, dst.ssa)
 
 
 # ---------------------------------------------------------------------------
-#  Row-expand broadcast ops  (src0_tile, src1_vector, dst)
+#  Row-expand broadcast ops  (dst, src, ...)
 # ---------------------------------------------------------------------------
 
-def trowexpand(src, dst):
+def trowexpand(dst, src):
     """Broadcast first element of each row across the entire row."""
     _pto.TRowExpandOp(src.ssa, dst.ssa)
 
 
-def trowexpanddiv(src, div_vec, dst):
+def trowexpanddiv(dst, src, div_vec):
     """Row-wise broadcast divide: dst[i,j] = src[i,j] / div_vec[i,0]."""
     _pto.TRowExpandDivOp(src.ssa, div_vec.ssa, dst.ssa)
 
 
-def trowexpandmul(src, mul_vec, dst):
+def trowexpandmul(dst, src, mul_vec):
     """Row-wise broadcast multiply: dst[i,j] = src[i,j] * mul_vec[i,0]."""
     _pto.TRowExpandMulOp(src.ssa, mul_vec.ssa, dst.ssa)
 
 
-def trowexpandsub(src, sub_vec, dst):
+def trowexpandsub(dst, src, sub_vec):
     """Row-wise broadcast subtract: dst[i,j] = src[i,j] - sub_vec[i,0]."""
     _pto.TRowExpandSubOp(src.ssa, sub_vec.ssa, dst.ssa)
 
@@ -353,7 +355,7 @@ def trowexpandsub(src, sub_vec, dst):
 #  Type conversion
 # ---------------------------------------------------------------------------
 
-def tcvt(src, dst, rmode=None):
+def tcvt(dst, src, rmode=None):
     """Convert tile element type.  *rmode* is a ``pto.RoundMode`` enum."""
     kwargs = {}
     if rmode is not None:
@@ -378,6 +380,32 @@ def wait_event(src_op, dst_op, event_id):
 def barrier_sync(op_type):
     """Emit ``pto.barrier_sync``.  Accepts SyncOpType enum directly."""
     _pto.barrier(op_type)
+
+
+def set_flag(src_pipe, dst_pipe, event_id):
+    """Emit ``pto.set_flag`` for low-level pipeline synchronization.
+
+    Signals that operations on *src_pipe* have completed, allowing
+    *dst_pipe* to proceed.  Accepts ``PIPE`` and ``EVENT`` enums.
+    """
+    from mlir.dialects.pto import PipeAttr, EventAttr, PIPE, EVENT
+    src = PipeAttr.get(src_pipe) if isinstance(src_pipe, PIPE) else src_pipe
+    dst = PipeAttr.get(dst_pipe) if isinstance(dst_pipe, PIPE) else dst_pipe
+    evt = EventAttr.get(event_id) if isinstance(event_id, EVENT) else event_id
+    _pto.SetFlagOp(src_pipe=src, dst_pipe=dst, event_id=evt)
+
+
+def wait_flag(src_pipe, dst_pipe, event_id):
+    """Emit ``pto.wait_flag`` for low-level pipeline synchronization.
+
+    Blocks *dst_pipe* until the matching ``set_flag`` from *src_pipe*
+    has been issued.  Accepts ``PIPE`` and ``EVENT`` enums.
+    """
+    from mlir.dialects.pto import PipeAttr, EventAttr, PIPE, EVENT
+    src = PipeAttr.get(src_pipe) if isinstance(src_pipe, PIPE) else src_pipe
+    dst = PipeAttr.get(dst_pipe) if isinstance(dst_pipe, PIPE) else dst_pipe
+    evt = EventAttr.get(event_id) if isinstance(event_id, EVENT) else event_id
+    _pto.WaitFlagOp(src_pipe=src, dst_pipe=dst, event_id=evt)
 
 
 # ---------------------------------------------------------------------------

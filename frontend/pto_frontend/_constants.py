@@ -4,6 +4,7 @@ from mlir.dialects.pto import (
     AddressSpace,
     SyncOpType,
     EVENT,
+    PIPE,
     TLOAD,
     TSTORE_ACC,
     TSTORE_VEC,
@@ -34,3 +35,11 @@ ACC = AddressSpace.ACC
 GM = AddressSpace.GM
 BIAS = AddressSpace.BIAS
 SCALING = AddressSpace.SCALING
+
+# Pipeline aliases
+PIPE_MTE1 = PIPE.PIPE_MTE1
+PIPE_MTE2 = PIPE.PIPE_MTE2
+PIPE_MTE3 = PIPE.PIPE_MTE3
+PIPE_V = PIPE.PIPE_V
+PIPE_M = PIPE.PIPE_M
+PIPE_ALL = PIPE.PIPE_ALL

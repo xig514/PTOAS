@@ -29,7 +29,7 @@ def tiled_conditional_add(
         y_view = y_tiled[i]
         z_view = z_tiled[i]
 
-        pto.tload(x_view, tile_x)
+        pto.tload(tile_x, x_view)
 
         # Conditional: is_even = (i % 2 == 0)
         is_even = (i % 2) == 0
@@ -37,11 +37,11 @@ def tiled_conditional_add(
         with pto.if_(is_even, has_else=True) as (then_br, else_br):
             with then_br:
                 # Even tiles: z = x + y
-                pto.tload(y_view, tile_y)
-                pto.tadd(tile_x, tile_y, tile_z)
+                pto.tload(tile_y, y_view)
+                pto.tadd(tile_z, tile_x, tile_y)
             with else_br:
                 # Odd tiles: z = x (copy via VEC→VEC move)
-                pto.tmov(tile_x, tile_z)
+                pto.tmov(tile_z, tile_x)
 
         pto.tstore(z_view, tile_z)
 
@@ -65,8 +65,8 @@ def tiled_step_iteration(
     with x_tiled.for_each(step=2) as (i, x_view):
         z_view = z_tiled[i]
 
-        pto.tload(x_view, tile_x)
-        pto.tadd(tile_x, tile_x, tile_z)  # z = 2*x
+        pto.tload(tile_x, x_view)
+        pto.tadd(tile_z, tile_x, tile_x)  # z = 2*x
         pto.tstore(z_view, tile_z)
 
 
@@ -92,8 +92,8 @@ def tiled_boundary_check(
 
         with pto.if_(cond):
             pv = x.partition([i * TILE, 0], [TILE, TILE])
-            pto.tload(pv, tile_x)
-            pto.texp(tile_x, tile_z)
+            pto.tload(tile_x, pv)
+            pto.texp(tile_z, tile_x)
             out_pv = z.partition([i * TILE, 0], [TILE, TILE])
             pto.tstore(out_pv, tile_z)
 

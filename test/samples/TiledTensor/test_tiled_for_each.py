@@ -26,9 +26,9 @@ def tiled_add(
         y_view = y_tiled[i]
         z_view = z_tiled[i]
 
-        pto.tload(x_view, tile_x)
-        pto.tload(y_view, tile_y)
-        pto.tadd(tile_x, tile_y, tile_z)
+        pto.tload(tile_x, x_view)
+        pto.tload(tile_y, y_view)
+        pto.tadd(tile_z, tile_x, tile_y)
         pto.tstore(z_view, tile_z)
 
 

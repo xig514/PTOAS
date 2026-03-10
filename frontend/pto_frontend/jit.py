@@ -75,7 +75,7 @@ class CompiledKernel:
 #  compile()
 # ---------------------------------------------------------------------------
 
-def compile(kernel_fn, *, pto_level="level3", arch="a3", npu_arch="dav-2201"):
+def compile(kernel_fn, *, pto_level="level3", arch="a3", npu_arch="dav-c220-vec"):
     """Compile a ``@pto.kernel`` function to a shared library.
 
     Parameters

@@ -1,5 +1,4 @@
 """@kernel decorator: signature parsing, Tensor flattening, tracing, and compilation."""
-bisheng -I/data/g00895580/Ascend/cann-8.5.0/include -fPIC -shared -D_FORTIFY_SOURCE=2 -O2 -std=c++17 -Wno-macro-redefined -Wno-ignored-attributes -fstack-protector-strong -xcce -Xhost-start -Xhost-end -mllvm -cce-aicore-stack-size=0x8000 -mllvm -cce-aicore-function-stack-size=0x8000 -mllvm -cce-aicore-record-overflow=true -mllvm -cce-aicore-addr-transform -mllvm -cce-aicore-dcci-insert-for-scalar=false --npu-arch=dav-2201 -DMEMORY_BASE -std=gnu++17 /data/g00895580/ptoas/PTOAS/test/samples/frontend/.ptodsl_jit/dynamic_add_kernel/caller.cpp
 import inspect
 import os
 import pathlib
@@ -165,6 +164,17 @@ class KernelFunction:
             raise RuntimeError(
                 "ASCEND_TOOLKIT_HOME is required to compile generated caller.cpp."
             )
+
+        # Detect section guards in the generated C++ and add -D flags so
+        # that the guarded code is actually compiled (section_cube emits
+        # #if defined(__DAV_CUBE__), section_vector emits __DAV_VEC__).
+        dav_defines = []
+        if self._cpp_cache:
+            if "__DAV_CUBE__" in self._cpp_cache:
+                dav_defines.append("-D__DAV_CUBE__")
+            if "__DAV_VEC__" in self._cpp_cache:
+                dav_defines.append("-D__DAV_VEC__")
+
         cmd = [
             "bisheng",
             f"-I{toolkit_home}/include",
@@ -184,9 +194,9 @@ class KernelFunction:
             "-mllvm", "-cce-aicore-record-overflow=true",
             "-mllvm", "-cce-aicore-addr-transform",
             "-mllvm", "-cce-aicore-dcci-insert-for-scalar=false",
-            f"--npu-arch={npu_arch}",
+            f"--cce-aicore-arch={npu_arch}",
             "-DMEMORY_BASE",
-            "-std=gnu++17",
+            *dav_defines,
             str(caller_path),
             "-o", str(lib_path),
         ]

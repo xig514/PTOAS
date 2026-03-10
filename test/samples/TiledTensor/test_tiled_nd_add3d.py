@@ -49,9 +49,9 @@ def add_3d_tiled(
             part_b = tiled_b[tile_idx]
             part_c = tiled_c[tile_idx]
 
-            pto.tload(part_a, tile_a)
-            pto.tload(part_b, tile_b)
-            pto.tadd(tile_a, tile_b, tile_c)
+            pto.tload(tile_a, part_a)
+            pto.tload(tile_b, part_b)
+            pto.tadd(tile_c, tile_a, tile_b)
             pto.tstore(part_c, tile_c)
 
 

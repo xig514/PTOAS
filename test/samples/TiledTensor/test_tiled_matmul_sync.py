@@ -41,25 +41,25 @@ def tiled_matmul_pipeline(
         c_view = c_tiled[i]
 
         # Load A tile: GM → MAT → LEFT
-        pto.tload(a_view, a_mat)
+        pto.tload(a_mat, a_view)
         pto.record_event(pto.TLOAD, pto.TMOV_M2L, pto.EVENT_ID0)
         pto.wait_event(pto.TLOAD, pto.TMOV_M2L, pto.EVENT_ID0)
-        pto.tmov(a_mat, a_left)
+        pto.tmov(a_left, a_mat)
 
         # Inner loop over K dimension
         with b_tiled.for_each() as (j, b_view):
             # Load B tile: GM → MAT → RIGHT
-            pto.tload(b_view, b_mat)
+            pto.tload(b_mat, b_view)
             pto.record_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID1)
             pto.wait_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID1)
-            pto.tmov(b_mat, b_right)
+            pto.tmov(b_right, b_mat)
 
             # Matmul via Cube unit
             pto.record_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
             pto.wait_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
             pto.record_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID1)
             pto.wait_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID1)
-            pto.tmatmul(a_left, b_right, c_acc)
+            pto.tmatmul(c_acc, a_left, b_right)
 
         # Store result: ACC → GM
         pto.record_event(pto.TMATMUL, pto.TSTORE_ACC, pto.EVENT_ID0)
@@ -93,41 +93,41 @@ def tiled_matmul_acc(
     a_view_0 = a_tiled[0]
     b_view_0 = b_tiled[0]
 
-    pto.tload(a_view_0, a_mat)
+    pto.tload(a_mat, a_view_0)
     pto.record_event(pto.TLOAD, pto.TMOV_M2L, pto.EVENT_ID0)
     pto.wait_event(pto.TLOAD, pto.TMOV_M2L, pto.EVENT_ID0)
-    pto.tmov(a_mat, a_left)
+    pto.tmov(a_left, a_mat)
 
-    pto.tload(b_view_0, b_mat)
+    pto.tload(b_mat, b_view_0)
     pto.record_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID1)
     pto.wait_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID1)
-    pto.tmov(b_mat, b_right)
+    pto.tmov(b_right, b_mat)
 
     pto.record_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
     pto.wait_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
     pto.record_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID1)
     pto.wait_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID1)
-    pto.tmatmul(a_left, b_right, c_acc)
+    pto.tmatmul(c_acc, a_left, b_right)
 
     # Remaining K tiles: matmul with accumulate
     with a_tiled.for_each(start=1, end=a_tiled.num_tiles) as (k, a_view):
         b_view = b_tiled[k]
 
-        pto.tload(a_view, a_mat)
+        pto.tload(a_mat, a_view)
         pto.record_event(pto.TLOAD, pto.TMOV_M2L, pto.EVENT_ID0)
         pto.wait_event(pto.TLOAD, pto.TMOV_M2L, pto.EVENT_ID0)
-        pto.tmov(a_mat, a_left)
+        pto.tmov(a_left, a_mat)
 
-        pto.tload(b_view, b_mat)
+        pto.tload(b_mat, b_view)
         pto.record_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID1)
         pto.wait_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID1)
-        pto.tmov(b_mat, b_right)
+        pto.tmov(b_right, b_mat)
 
         pto.record_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
         pto.wait_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
         pto.record_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID1)
         pto.wait_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID1)
-        pto.tmatmul_acc(c_acc, a_left, b_right, c_acc)
+        pto.tmatmul_acc(c_acc, c_acc, a_left, b_right)
 
     # Store
     pto.record_event(pto.TMATMUL, pto.TSTORE_ACC, pto.EVENT_ID0)
