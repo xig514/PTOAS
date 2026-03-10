@@ -55,8 +55,8 @@ from ._ops import (
     get_value
 )
 
-# -- jit decorator --
-from .jit import jit
+# -- jit decorator, compile, launch --
+from .jit import jit, compile, launch
 
 # -- control flow --
 from ._control_flow import for_range, range, if_

@@ -1,5 +1,7 @@
 """@kernel decorator: signature parsing, Tensor flattening, tracing, and compilation."""
-
+In file included from /data/g00895580/Ascend/cann-8.5.0/include/pto/common/pto_instr_impl.hpp:42:
+/data/g00895580/Ascend/cann-8.5.0/include/pto/npu/a2a3/TLoad.hpp:22:9: error: function type 'void (__ubuf__ void *, __gm__ void *, unsigned char, unsigned short, unsigned int, unsigned char, unsigned char, unsigned int, unsigned int) noexcept' of 'copy_gm_to_ubuf_align_b16' does not support the given target feature
+        copy_gm_to_ubuf_align_b16(dst, src, 0, nBurst, lenBurst, 0, ubPad, gmGap, ubGap);
 import inspect
 import os
 import pathlib
@@ -127,6 +129,7 @@ class KernelFunction:
 
         cpp_params = []
         kernel_args = []
+	
         for pname, spec in self._param_specs:
             if isinstance(spec, (_TensorSpec, _TensorShapeSpec)):
                 elem_cpp = _DTYPE_TO_CPP[spec.dtype.name]
@@ -150,14 +153,11 @@ class KernelFunction:
         call_args = ", ".join(kernel_args)
 
         return (
-            f'#if __CCE_AICORE__ == 220 && defined(__DAV_C220_VEC__)\n'
             f'#include "{kernel_cpp_name}"\n'
-            f"#include <cstdint>\n\n"
             f'extern "C" void call_kernel({sig})\n'
             "{\n"
             f"    {self._name}<<<blockDim, nullptr, stream>>>({call_args});\n"
             "}\n"
-            f"#endif\n"
         )
 
     def _compile_with_bisheng(self, caller_path, lib_path, npu_arch):
