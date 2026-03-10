@@ -1,4 +1,4 @@
-"""Control-flow helpers: for_range and if_ context managers."""
+"""Control-flow helpers: for_range, range, and if_."""
 
 from contextlib import contextmanager
 
@@ -8,6 +8,10 @@ from mlir.dialects import scf
 from ._scalar import ScalarValue
 from ._utils import ensure_index_ssa
 
+
+# ---------------------------------------------------------------------------
+#  for_range  (context-manager style, kept for backward compatibility)
+# ---------------------------------------------------------------------------
 
 @contextmanager
 def for_range(start, end, step=1):
@@ -30,6 +34,88 @@ def for_range(start, end, step=1):
         scf.YieldOp([])
     finally:
         ip.__exit__(None, None, None)
+
+
+# ---------------------------------------------------------------------------
+#  range  (iterator style — Pythonic ``for i in pto.range(...)``)
+# ---------------------------------------------------------------------------
+
+class _RangeIterator:
+    """Iterator that emits ``scf.for`` using Python's ``for`` protocol.
+
+    During tracing the loop body executes exactly **once**.  The iterator
+    creates the ``scf.ForOp`` in ``__iter__``, yields the induction variable
+    on the first ``__next__``, and on the second call emits ``scf.YieldOp``,
+    restores the insertion point, then raises ``StopIteration``.
+
+    Usage::
+
+        for i in pto.range(N):
+            ...
+
+        for i in pto.range(0, M, 64):
+            ...
+    """
+
+    def __init__(self, start, stop, step):
+        self._start = start
+        self._stop = stop
+        self._step = step
+        self._loop = None
+        self._ip = None
+        self._yielded = False
+
+    def __iter__(self):
+        start_ssa = ensure_index_ssa(self._start)
+        stop_ssa = ensure_index_ssa(self._stop)
+        step_ssa = ensure_index_ssa(self._step)
+
+        self._loop = scf.ForOp(start_ssa, stop_ssa, step_ssa, [])
+        self._ip = InsertionPoint(self._loop.body)
+        self._ip.__enter__()
+        self._yielded = False
+        return self
+
+    def __next__(self):
+        if not self._yielded:
+            self._yielded = True
+            return ScalarValue(self._loop.induction_variable)
+        # Loop body tracing is done — close the scf.for region.
+        scf.YieldOp([])
+        self._ip.__exit__(None, None, None)
+        raise StopIteration
+
+
+def range(*args):
+    """Create an ``scf.for`` loop via Python's ``for`` statement.
+
+    Signatures (mirror Python's built-in ``range``)::
+
+        pto.range(stop)
+        pto.range(start, stop)
+        pto.range(start, stop, step)
+
+    Each argument can be an ``int``, a :class:`ScalarValue`, or a
+    :class:`DynVar`.
+
+    Examples::
+
+        for i in pto.range(N):
+            ...
+
+        for i in pto.range(0, M, 64):
+            ...
+    """
+    if len(args) == 1:
+        return _RangeIterator(0, args[0], 1)
+    elif len(args) == 2:
+        return _RangeIterator(args[0], args[1], 1)
+    elif len(args) == 3:
+        return _RangeIterator(args[0], args[1], args[2])
+    else:
+        raise TypeError(
+            f"pto.range() takes 1 to 3 positional arguments, got {len(args)}"
+        )
 
 
 class _Branch:

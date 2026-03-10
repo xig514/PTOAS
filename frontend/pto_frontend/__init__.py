@@ -59,7 +59,7 @@ from ._ops import (
 from .jit import jit
 
 # -- control flow --
-from ._control_flow import for_range, if_
+from ._control_flow import for_range, range, if_
 
 # -- tiling utilities --
 from ._layout import TileLayout as TileLayout_v1  # Old version
