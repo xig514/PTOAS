@@ -1,7 +1,5 @@
 """@kernel decorator: signature parsing, Tensor flattening, tracing, and compilation."""
-In file included from /data/g00895580/Ascend/cann-8.5.0/include/pto/common/pto_instr_impl.hpp:42:
-/data/g00895580/Ascend/cann-8.5.0/include/pto/npu/a2a3/TLoad.hpp:22:9: error: function type 'void (__ubuf__ void *, __gm__ void *, unsigned char, unsigned short, unsigned int, unsigned char, unsigned char, unsigned int, unsigned int) noexcept' of 'copy_gm_to_ubuf_align_b16' does not support the given target feature
-        copy_gm_to_ubuf_align_b16(dst, src, 0, nBurst, lenBurst, 0, ubPad, gmGap, ubGap);
+bisheng -I/data/g00895580/Ascend/cann-8.5.0/include -fPIC -shared -D_FORTIFY_SOURCE=2 -O2 -std=c++17 -Wno-macro-redefined -Wno-ignored-attributes -fstack-protector-strong -xcce -Xhost-start -Xhost-end -mllvm -cce-aicore-stack-size=0x8000 -mllvm -cce-aicore-function-stack-size=0x8000 -mllvm -cce-aicore-record-overflow=true -mllvm -cce-aicore-addr-transform -mllvm -cce-aicore-dcci-insert-for-scalar=false --npu-arch=dav-2201 -DMEMORY_BASE -std=gnu++17 /data/g00895580/ptoas/PTOAS/test/samples/frontend/.ptodsl_jit/dynamic_add_kernel/caller.cpp
 import inspect
 import os
 import pathlib
@@ -192,6 +190,7 @@ class KernelFunction:
             str(caller_path),
             "-o", str(lib_path),
         ]
+        print("CMD:", " ".join(cmd) if isinstance(cmd, list) else cmd)
         subprocess.run(cmd, check=True, cwd=str(self._ensure_output_dir()))
 
     def _trace(self, builder):
