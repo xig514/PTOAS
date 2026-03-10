@@ -22,7 +22,7 @@ When you change any user-visible behavior, keep these layers synchronized:
 ### Full configure, compile，build, install
 ```bash
 export HOME=/data/g00895580
-bash compile.sh
+source compile.sh
 ```
 
 ## Test Commands
