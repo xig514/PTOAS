@@ -3,8 +3,8 @@
 Demonstrates:
   - DynVar for dynamic shapes
   - Tensor[[M, N], dtype] annotation
-  - Additional int parameter (tile_m)
-  - Nested for_range loops with dynamic bounds computed from DynVar arithmetic
+  - Pythonic ``for i in pto.range(...)`` loops
+  - Nested loops with dynamic bounds computed from DynVar arithmetic
   - Offset computation inside loops (i * TILE_N, etc.)
   - Tile load / add / store with partition views
 
@@ -46,8 +46,8 @@ def dynamic_add_kernel(
     m_loops = (M + (TILE_M - 1)) // TILE_M
     n_loops = (N + (TILE_N - 1)) // TILE_N
 
-    with pto.for_range(0, m_loops, 1) as i:
-        with pto.for_range(0, n_loops, 1) as j:
+    for i in pto.range(m_loops):
+        for j in pto.range(n_loops):
             # Offset computation inside the loop
             m_offset = i * TILE_M
             n_offset = j * TILE_N
