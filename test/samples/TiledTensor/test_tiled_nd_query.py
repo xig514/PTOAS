@@ -27,7 +27,7 @@ def query_tiled_2d(
 
     with distributed.for_each() as (tile_idx, partition):
         tile_buf = pto.make_tile((TILE_S, TILE_D), pto.float16, pto.VEC, addr=0)
-        pto.tload(partition, tile_buf)
+        pto.tload(tile_buf, partition)
         pto.tstore(partition, tile_buf)
 
 
@@ -57,7 +57,7 @@ def query_batched_heads(
         with pto.for_range(0, num_heads) as n:
             # Inner tiled loop over sequence dimension
             with tiled.for_each() as (tile_idx, partition):
-                pto.tload(partition, tile_buf)
+                pto.tload(tile_buf, partition)
                 pto.tstore(partition, tile_buf)
 
 

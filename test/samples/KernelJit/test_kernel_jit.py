@@ -53,9 +53,9 @@ def vector_add(
     ty = pto.make_tile((TILE_M, TILE_N), pto.float16, pto.VEC)
     to = pto.make_tile((TILE_M, TILE_N), pto.float16, pto.VEC)
 
-    pto.tload(x_part, tx)
-    pto.tload(y_part, ty)
-    pto.tadd(tx, ty, to)
+    pto.tload(tx, x_part)
+    pto.tload(ty, y_part)
+    pto.tadd(to, tx, ty)
     pto.tstore(o_part, to)
 
 

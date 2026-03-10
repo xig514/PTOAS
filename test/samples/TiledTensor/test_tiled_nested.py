@@ -27,11 +27,11 @@ def nested_tile_matmul(
     out_tiled = out.tile(dim=0, tile_sizes=(TILE_M, TILE_N))
 
     with q_dist.for_each() as (qi, q_view):
-        pto.tload(q_view, tile_q)
+        pto.tload(tile_q, q_view)
 
         with k_tiled.for_each() as (ki, k_view):
-            pto.tload(k_view, tile_k)
-            pto.tadd(tile_q, tile_k, tile_o)
+            pto.tload(tile_k, k_view)
+            pto.tadd(tile_o, tile_q, tile_k)
 
         o_view = out_tiled[qi]
         pto.tstore(o_view, tile_o)

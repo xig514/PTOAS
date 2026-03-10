@@ -39,6 +39,7 @@ ptoas a.pto --pto-level=level3
 ```
 
 ## Rules
+- matmul的代码需要加with pto.section_cube():, 其他vector代码需要加with pto.section_vector():.
 - cmake command is shown in "Full configure"
 - Make sure the test case in "Run a python ir and ptoas testcase" can be executed without error.
 - Your testcase should also use ptoas to compile the ir which is generated from your new frontend. 

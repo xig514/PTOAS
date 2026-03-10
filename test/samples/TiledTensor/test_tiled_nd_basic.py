@@ -23,7 +23,7 @@ def basic_nd_tiling(
         # partition is [32, 128]
 
         tile_buf = pto.make_tile((32, 128), pto.float16, pto.VEC, addr=0)
-        pto.tload(partition, tile_buf)
+        pto.tload(tile_buf, partition)
         pto.tstore(partition, tile_buf)
 
 

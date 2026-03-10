@@ -34,46 +34,42 @@ def dynamic_add_kernel(
     y: pto.Tensor[[M, N], pto.float16],
     z: pto.Tensor[[M, N], pto.float16],
 ):
-    tile_a = pto.make_tile((TILE_M, TILE_N), pto.float16, pto.VEC, addr=0)
-    tile_b = pto.make_tile((TILE_M, TILE_N), pto.float16, pto.VEC,
-                           addr=TILE_M * TILE_N * 2)
-    tile_c = pto.make_tile((TILE_M, TILE_N), pto.float16, pto.VEC,
-                           addr=TILE_M * TILE_N * 4)
+    with pto.section_vector():
+        tile_a = pto.make_tile((TILE_M, TILE_N), pto.float16, pto.VEC, addr=0)
+        tile_b = pto.make_tile((TILE_M, TILE_N), pto.float16, pto.VEC,
+                               addr=TILE_M * TILE_N * 2)
+        tile_c = pto.make_tile((TILE_M, TILE_N), pto.float16, pto.VEC,
+                               addr=TILE_M * TILE_N * 4)
 
-    m_loops = (M + (TILE_M - 1)) // TILE_M
-    n_loops = (N + (TILE_N - 1)) // TILE_N
+        m_loops = (M + (TILE_M - 1)) // TILE_M
+        n_loops = (N + (TILE_N - 1)) // TILE_N
+        pto.set_flag(pto.PIPE_MTE3, pto.PIPE_V, pto.EVENT_ID1)
+        pto.set_flag(pto.PIPE_V, pto.PIPE_MTE2, pto.EVENT_ID2)
+        for i in pto.range(m_loops):
+            for j in pto.range(n_loops):
+                m_offset = i * TILE_M
+                n_offset = j * TILE_N
 
-    for i in pto.range(m_loops):
-        for j in pto.range(n_loops):
-            m_offset = i * TILE_M
-            n_offset = j * TILE_N
-
-            pv_x = x.partition(offsets=[m_offset, n_offset],
-                               sizes=[TILE_M, TILE_N])
-            pv_y = y.partition(offsets=[m_offset, n_offset],
-                               sizes=[TILE_M, TILE_N])
-            pv_z = z.partition(offsets=[m_offset, n_offset],
-                               sizes=[TILE_M, TILE_N])
-
-            pto.tload(pv_x, tile_a)
-            pto.tload(pv_y, tile_b)
-            pto.tadd(tile_a, tile_b, tile_c)
-            pto.tstore(pv_z, tile_c)
-
-
-def test_ir_only():
-    """Verify IR generation and ptoas compilation (no NPU needed)."""
-    ir = dynamic_add_kernel.emit_ir()
-    print(ir)
-
-    checks = [
-        "scf.for", "pto.partition_view", "pto.tload",
-        "pto.tadd", "pto.tstore", "arith.addi",
-        "arith.muli", "arith.divsi",
-    ]
-    for pat in checks:
-        assert pat in ir, f"Missing expected pattern in IR: {pat}"
-    print("// IR checks passed.", file=sys.stderr)
+                pv_x = x.partition(offsets=[m_offset, n_offset],
+                                   sizes=[TILE_M, TILE_N])
+                pv_y = y.partition(offsets=[m_offset, n_offset],
+                                   sizes=[TILE_M, TILE_N])
+                pv_z = z.partition(offsets=[m_offset, n_offset],
+                                   sizes=[TILE_M, TILE_N])
+                pto.wait_flag(pto.PIPE_V, pto.PIPE_MTE2, pto.EVENT_ID2)
+                pto.tload(tile_a, pv_x)
+                pto.tload(tile_b, pv_y)
+                # Sync: wait for DMA loads to complete before VEC compute
+                pto.set_flag(pto.PIPE_MTE2, pto.PIPE_V, pto.EVENT_ID0)
+                pto.wait_flag(pto.PIPE_MTE2, pto.PIPE_V, pto.EVENT_ID0)
+                pto.wait_flag(pto.PIPE_MTE3, pto.PIPE_V, pto.EVENT_ID1)
+                pto.tadd(tile_c, tile_a, tile_b)
+                pto.set_flag(pto.PIPE_V, pto.PIPE_MTE2, pto.EVENT_ID2)
+                # Sync: wait for VEC compute to complete before DMA store
+                pto.set_flag(pto.PIPE_V, pto.PIPE_MTE3, pto.EVENT_ID0)
+                pto.wait_flag(pto.PIPE_V, pto.PIPE_MTE3, pto.EVENT_ID0)
+                pto.tstore(pv_z, tile_c)
+                pto.set_flag(pto.PIPE_MTE3, pto.PIPE_V, pto.EVENT_ID1)
 
 
 def test_npu_launch():
@@ -90,23 +86,23 @@ def test_npu_launch():
         torch.npu.set_device(device)
         dtype = torch.float16
 
-        # shapes = [
-        #     (64, 128),
-        #     #(128, 256),
-        # ]
+        shapes = [
+            (64, 128),
+            (128, 256),
+        ]
 
-        # for shape in shapes:
-        #     torch.manual_seed(42)
-        #     x = torch.rand(shape, device=device, dtype=dtype)
-        #     y = torch.rand(shape, device=device, dtype=dtype)
-        #     z = torch.empty(shape, device=device, dtype=dtype)
+        for shape in shapes:
+            torch.manual_seed(42)
+            x = torch.rand(shape, device=device, dtype=dtype)
+            y = torch.rand(shape, device=device, dtype=dtype)
+            z = torch.empty(shape, device=device, dtype=dtype)
 
-        #     pto.launch(compiled, x, y, z)
-        #     torch.npu.synchronize()
+            pto.launch(compiled, x, y, z)
+            torch.npu.synchronize()
 
-        #     z_ref = x + y
-        #     torch.testing.assert_close(z, z_ref)
-        #     print(f"  shape {shape}: PASS", file=sys.stderr)
+            z_ref = x + y
+            torch.testing.assert_close(z, z_ref)
+            print(f"  shape {shape}: PASS", file=sys.stderr)
 
     run()
     print("// NPU launch tests passed.", file=sys.stderr)

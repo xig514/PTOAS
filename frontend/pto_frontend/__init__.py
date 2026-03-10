@@ -49,6 +49,7 @@ from ._ops import (
     tcvt,
     # sync
     record_event, wait_event, barrier_sync,
+    set_flag, wait_flag,
     # system
     get_block_idx, get_block_num,
     # scalar memory access
@@ -61,6 +62,9 @@ from .jit import jit, compile, launch
 # -- control flow --
 from ._control_flow import for_range, range, if_
 
+# -- section guards --
+from ._section import section_vector, section_cube
+
 # -- tiling utilities --
 from ._layout import TileLayout as TileLayout_v1  # Old version
 from ._layout_v2 import TensorLayout, TileLayout, TileCoordinate, TiledView, PartialCoord, coord_combine
@@ -72,6 +76,7 @@ from ._split_utils import split_even, split_causal, split_sequential, split_even
 # -- address-space & sync constants --
 from ._constants import (
     VEC, MAT, LEFT, RIGHT, ACC, GM, BIAS, SCALING,
+    PIPE_MTE1, PIPE_MTE2, PIPE_MTE3, PIPE_V, PIPE_M, PIPE_ALL,
     TLOAD, TSTORE_ACC, TSTORE_VEC,
     TMOV_M2L, TMOV_M2S, TMOV_M2B, TMOV_M2V, TMOV_V2M,
     TMATMUL, TVEC, TVECWAIT_EVENT,

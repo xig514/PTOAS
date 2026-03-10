@@ -103,10 +103,10 @@ def flash_attention_with_pse(
         # q_coord = (b_idx, n_idx, sq_idx, d_idx)
 
         # Load Q tile -> MAT -> LEFT
-        pto.tload_tile(q, q_coord, q_tile, q_mat)
+        pto.tload_tile(q_mat, q, q_coord, q_tile)
         pto.record_event(pto.TLOAD, pto.TMOV_M2L, pto.EVENT_ID0)
         pto.wait_event(pto.TLOAD, pto.TMOV_M2L, pto.EVENT_ID0)
-        pto.tmov(q_mat, q_left)
+        pto.tmov(q_left, q_mat)
 
         with k_tiled.for_each() as k_coord:
             # k_coord = (b_idx2, n_idx2, sk_idx, d_idx2)
@@ -120,65 +120,65 @@ def flash_attention_with_pse(
             # pse_coord = (b_idx, n_idx, sq_idx, sk_idx) -- matches PSE [B,N,Sq,Sk]
 
             # Load PSE tile -> VEC
-            pto.tload_tile(pse, pse_coord, pse_tile, pse_f16)
+            pto.tload_tile(pse_f16, pse, pse_coord, pse_tile)
 
             # Load K tile -> MAT -> RIGHT
-            pto.tload_tile(k, k_coord, k_tile, k_mat)
+            pto.tload_tile(k_mat, k, k_coord, k_tile)
             pto.record_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID1)
             pto.wait_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID1)
-            pto.tmov(k_mat, k_right)
+            pto.tmov(k_right, k_mat)
 
             # S = Q @ K^T
             pto.record_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
             pto.wait_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
             pto.record_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID1)
             pto.wait_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID1)
-            pto.tmatmul(q_left, k_right, s_acc)
+            pto.tmatmul(s_acc, q_left, k_right)
 
             # S: ACC -> VEC
             pto.record_event(pto.TMATMUL, pto.TMOV_M2V, pto.EVENT_ID0)
             pto.wait_event(pto.TMATMUL, pto.TMOV_M2V, pto.EVENT_ID0)
-            pto.tmov(s_acc, s_vec)
+            pto.tmov(s_vec, s_acc)
 
             # S += PSE (add position shift encoding)
             pto.record_event(pto.TMOV_M2V, pto.TVEC, pto.EVENT_ID0)
             pto.wait_event(pto.TMOV_M2V, pto.TVEC, pto.EVENT_ID0)
-            pto.tcvt(pse_f16, pse_f32)
-            pto.tadd(s_vec, pse_f32, s_vec)
+            pto.tcvt(pse_f32, pse_f16)
+            pto.tadd(s_vec, s_vec, pse_f32)
 
             # Softmax
-            pto.trowmax(s_vec, tmp_vec, tmp_vec)
-            pto.trowexpandsub(s_vec, tmp_vec, s_vec)
+            pto.trowmax(tmp_vec, s_vec, tmp_vec)
+            pto.trowexpandsub(s_vec, s_vec, tmp_vec)
             pto.texp(s_vec, s_vec)
-            pto.trowsum(s_vec, tmp_vec, tmp_vec)
-            pto.trowexpanddiv(s_vec, tmp_vec, s_vec)
+            pto.trowsum(tmp_vec, s_vec, tmp_vec)
+            pto.trowexpanddiv(s_vec, s_vec, tmp_vec)
 
             # attn: VEC -> MAT -> LEFT
-            pto.tcvt(s_vec, attn_f16)
+            pto.tcvt(attn_f16, s_vec)
             pto.record_event(pto.TVEC, pto.TMOV_V2M, pto.EVENT_ID0)
             pto.wait_event(pto.TVEC, pto.TMOV_V2M, pto.EVENT_ID0)
-            pto.tmov(attn_f16, attn_mat)
+            pto.tmov(attn_mat, attn_f16)
             pto.record_event(pto.TMOV_V2M, pto.TMOV_M2L, pto.EVENT_ID0)
             pto.wait_event(pto.TMOV_V2M, pto.TMOV_M2L, pto.EVENT_ID0)
-            pto.tmov(attn_mat, attn_left)
+            pto.tmov(attn_left, attn_mat)
 
             # Load V (reuse k_coord for V since V is [B,N,Sk,D])
-            pto.tload_tile(v, k_coord, k_tile, v_mat)
+            pto.tload_tile(v_mat, v, k_coord, k_tile)
             pto.record_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID2)
             pto.wait_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID2)
-            pto.tmov(v_mat, v_right)
+            pto.tmov(v_right, v_mat)
 
             # O = attn @ V
             pto.record_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
             pto.wait_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
             pto.record_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID2)
             pto.wait_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID2)
-            pto.tmatmul(attn_left, v_right, o_acc)
+            pto.tmatmul(o_acc, attn_left, v_right)
 
         # Store O
         pto.record_event(pto.TMATMUL, pto.TSTORE_ACC, pto.EVENT_ID0)
         pto.wait_event(pto.TMATMUL, pto.TSTORE_ACC, pto.EVENT_ID0)
-        pto.tstore_tile(o_acc, out, q_coord, tile_layout=q_tile)
+        pto.tstore_tile(out, o_acc, q_coord, tile_layout=q_tile)
 
 
 # ============================================================================
@@ -270,64 +270,64 @@ def flash_attention_actual_seq(
         with pto.for_range(q_loop_start, q_end, q_loop_step) as q_elem:
             # Load Q tile via explicit partition (handles non-aligned offsets)
             q_pv = q.partition(offsets=[q_elem, 0], sizes=[TILE, TILE])
-            pto.tload(q_pv, q_mat)
+            pto.tload(q_mat, q_pv)
             pto.record_event(pto.TLOAD, pto.TMOV_M2L, pto.EVENT_ID0)
             pto.wait_event(pto.TLOAD, pto.TMOV_M2L, pto.EVENT_ID0)
-            pto.tmov(q_mat, q_left)
+            pto.tmov(q_left, q_mat)
 
             # K tile loop: iterate element offsets with TILE step
             # k_start and k_end used directly as loop bounds
             with pto.for_range(k_start, k_end, TILE) as k_elem:
                 # Load K -> MAT -> RIGHT
                 k_pv = k.partition(offsets=[k_elem, 0], sizes=[TILE, TILE])
-                pto.tload(k_pv, k_mat)
+                pto.tload(k_mat, k_pv)
                 pto.record_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID1)
                 pto.wait_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID1)
-                pto.tmov(k_mat, k_right)
+                pto.tmov(k_right, k_mat)
 
                 # S = Q @ K^T
                 pto.record_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
                 pto.wait_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
                 pto.record_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID1)
                 pto.wait_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID1)
-                pto.tmatmul(q_left, k_right, s_acc)
+                pto.tmatmul(s_acc, q_left, k_right)
 
                 # S: ACC -> VEC
                 pto.record_event(pto.TMATMUL, pto.TMOV_M2V, pto.EVENT_ID0)
                 pto.wait_event(pto.TMATMUL, pto.TMOV_M2V, pto.EVENT_ID0)
-                pto.tmov(s_acc, s_vec)
+                pto.tmov(s_vec, s_acc)
 
                 # Softmax
                 pto.record_event(pto.TMOV_M2V, pto.TVEC, pto.EVENT_ID0)
                 pto.wait_event(pto.TMOV_M2V, pto.TVEC, pto.EVENT_ID0)
-                pto.trowmax(s_vec, tmp_vec, tmp_vec)
-                pto.trowexpandsub(s_vec, tmp_vec, s_vec)
+                pto.trowmax(tmp_vec, s_vec, tmp_vec)
+                pto.trowexpandsub(s_vec, s_vec, tmp_vec)
                 pto.texp(s_vec, s_vec)
-                pto.trowsum(s_vec, tmp_vec, tmp_vec)
-                pto.trowexpanddiv(s_vec, tmp_vec, s_vec)
+                pto.trowsum(tmp_vec, s_vec, tmp_vec)
+                pto.trowexpanddiv(s_vec, s_vec, tmp_vec)
 
                 # attn: VEC -> MAT -> LEFT
-                pto.tcvt(s_vec, attn_f16)
+                pto.tcvt(attn_f16, s_vec)
                 pto.record_event(pto.TVEC, pto.TMOV_V2M, pto.EVENT_ID0)
                 pto.wait_event(pto.TVEC, pto.TMOV_V2M, pto.EVENT_ID0)
-                pto.tmov(attn_f16, attn_mat)
+                pto.tmov(attn_mat, attn_f16)
                 pto.record_event(pto.TMOV_V2M, pto.TMOV_M2L, pto.EVENT_ID0)
                 pto.wait_event(pto.TMOV_V2M, pto.TMOV_M2L, pto.EVENT_ID0)
-                pto.tmov(attn_mat, attn_left)
+                pto.tmov(attn_left, attn_mat)
 
                 # Load V (same element offset as K)
                 v_pv = v.partition(offsets=[k_elem, 0], sizes=[TILE, TILE])
-                pto.tload(v_pv, v_mat)
+                pto.tload(v_mat, v_pv)
                 pto.record_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID2)
                 pto.wait_event(pto.TLOAD, pto.TMOV_M2S, pto.EVENT_ID2)
-                pto.tmov(v_mat, v_right)
+                pto.tmov(v_right, v_mat)
 
                 # O = attn @ V
                 pto.record_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
                 pto.wait_event(pto.TMOV_M2L, pto.TMATMUL, pto.EVENT_ID0)
                 pto.record_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID2)
                 pto.wait_event(pto.TMOV_M2S, pto.TMATMUL, pto.EVENT_ID2)
-                pto.tmatmul(attn_left, v_right, o_acc)
+                pto.tmatmul(o_acc, attn_left, v_right)
 
             # Store O tile
             pto.record_event(pto.TMATMUL, pto.TSTORE_ACC, pto.EVENT_ID0)

@@ -34,22 +34,22 @@ def tiled_softmax(
     with x_tiled.for_each() as (i, x_view):
         z_view = z_tiled[i]
 
-        pto.tload(x_view, tile_in)
+        pto.tload(tile_in, x_view)
 
         # Row-wise softmax using reduction + broadcast ops
         # 1) row max for numerical stability
-        pto.trowmax(tile_in, tile_tmp, tile_tmp)
+        pto.trowmax(tile_tmp, tile_in, tile_tmp)
         # 2) subtract broadcast(max) from each element
-        pto.trowexpandsub(tile_in, tile_tmp, tile_in)
+        pto.trowexpandsub(tile_in, tile_in, tile_tmp)
         # 3) exponentiate
         pto.texp(tile_in, tile_in)
         # 4) row sum
-        pto.trowsum(tile_in, tile_tmp, tile_tmp)
+        pto.trowsum(tile_tmp, tile_in, tile_tmp)
         # 5) divide by broadcast(sum)
-        pto.trowexpanddiv(tile_in, tile_tmp, tile_in)
+        pto.trowexpanddiv(tile_in, tile_in, tile_tmp)
 
         # 6) convert f32 → f16
-        pto.tcvt(tile_in, tile_out_f16)
+        pto.tcvt(tile_out_f16, tile_in)
 
         pto.tstore(z_view, tile_out_f16)
 
@@ -77,11 +77,11 @@ def tiled_row_broadcast_ops(
         s_view = s_tiled[i]
         z_view = z_tiled[i]
 
-        pto.tload(x_view, tile_x)
-        pto.tload(s_view, tile_s)
+        pto.tload(tile_x, x_view)
+        pto.tload(tile_s, s_view)
 
         # Row-wise broadcast multiply
-        pto.trowexpandmul(tile_x, tile_s, tile_z)
+        pto.trowexpandmul(tile_z, tile_x, tile_s)
 
         pto.tstore(z_view, tile_z)
 
