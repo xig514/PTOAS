@@ -30,6 +30,8 @@ source compile.sh
 ```bash
 python3 test/samples/frontend/test_jit_launch.py
 ```
+### mlir python path
+/data/g00895580/mlir/llvm-project/build-shared/tools/mlir/python_packages/mlir_core
 
 ## Pipeline and sync
 - TLOAD is PIPE_MTE2, TSTORE_ACC is PIPE_FIX, TMOV_M2L and TMOV_M2B are MTE1, TMOV_M2S and TMOV_V2M are PIPE_FIX, TMOV_M2V is PIPV, TMATMUL is PIPE_M, TVEC and TVECWAIT_EVENT is PIPE_V

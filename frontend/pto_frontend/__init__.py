@@ -60,7 +60,10 @@ from ._ops import (
 from .jit import jit, compile, launch
 
 # -- control flow --
-from ._control_flow import for_range, range, if_
+from ._control_flow import for_range, range, if_, else_
+
+# -- tile group (dynamic buffer selection) --
+from ._tile_group import TileGroup
 
 # -- section guards --
 from ._section import section_vector, section_cube

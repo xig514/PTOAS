@@ -162,12 +162,12 @@ def test_npu_launch():
         # Test shapes: (M, N, K) — all multiples of 64
         shapes = [
             # (M, N, K)
-            # (64, 64, 64),       # single tile in each dimension
+            (64, 64, 64),       # single tile in each dimension
             (128, 128, 128),    # 2×2×2 tiles
-            # (64, 128, 192),     # rectangular: 1×2×3 tiles
-            # (192, 128, 64),     # rectangular: 3×2×1 tiles
-            # (128, 256, 128),    # wider: 2×4×2 tiles
-            # (256, 256, 256),    # larger square: 4×4×4 tiles
+            (64, 128, 192),     # rectangular: 1×2×3 tiles
+            (192, 128, 64),     # rectangular: 3×2×1 tiles
+            (128, 256, 128),    # wider: 2×4×2 tiles
+            (256, 256, 256),    # larger square: 4×4×4 tiles
         ]
 
         for (m, n, k) in shapes:
