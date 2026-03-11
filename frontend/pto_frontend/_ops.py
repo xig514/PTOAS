@@ -13,6 +13,40 @@ from ._scalar import ScalarValue
 from ._constants import VEC, MAT, LEFT, RIGHT, ACC, BIAS, SCALING
 
 from mlir.dialects import arith
+from mlir.dialects.pto import PIPE
+
+
+# ---------------------------------------------------------------------------
+#  Sync tracker helpers
+# ---------------------------------------------------------------------------
+
+def _get_tracker():
+    from ._sync_tracker import get_sync_tracker
+    return get_sync_tracker()
+
+
+def _product(seq):
+    """Return the product of an iterable of ints."""
+    r = 1
+    for x in seq:
+        r *= x
+    return r
+
+
+def _tmov_pipe(dst, src):
+    """Determine the pipeline for a tmov based on src/dst address spaces."""
+    if src.loc == MAT and dst.loc in (LEFT, RIGHT):
+        return PIPE.PIPE_MTE1
+    if src.loc == MAT and dst.loc == VEC:
+        return PIPE.PIPE_V
+    if src.loc == MAT and dst.loc == BIAS:
+        return PIPE.PIPE_MTE1
+    # VEC→MAT, MAT→SCALING are FIX
+    if src.loc == VEC and dst.loc == MAT:
+        return PIPE.PIPE_FIX
+    if src.loc == MAT and dst.loc == SCALING:
+        return PIPE.PIPE_FIX
+    return PIPE.PIPE_MTE3
 
 
 # ---------------------------------------------------------------------------
@@ -82,13 +116,25 @@ def make_tile(shape, dtype, loc, addr=0, *,
     builder = get_builder()
     if isinstance(addr, ScalarValue):
         addr_ssa = addr.ssa
+        addr_int = 0  # dynamic — can't do static overlap analysis
     elif isinstance(addr, int):
         addr_ssa = builder.constant_i64(addr)
+        addr_int = addr
     else:
         addr_ssa = addr
+        addr_int = 0
+
+    byte_size = _product(shape) * dtype.byte_size
 
     tile_ssa = _pto.AllocTileOp(tile_buf_type, addr=addr_ssa).result
-    return Tile(tile_ssa, tuple(shape), dtype, loc)
+    tile = Tile(tile_ssa, tuple(shape), dtype, loc,
+                byte_offset=addr_int, byte_size=byte_size)
+
+    tracker = _get_tracker()
+    if tracker:
+        tracker.register_tile(tile, loc, addr_int, byte_size)
+
+    return tile
 
 
 # ---------------------------------------------------------------------------
@@ -97,11 +143,18 @@ def make_tile(shape, dtype, loc, addr=0, *,
 
 def tload(tile, pv):
     """Load from a partition view into a tile buffer."""
+    tracker = _get_tracker()
+    if tracker:
+        tracker.record_op(PIPE.PIPE_MTE2, reads=[], writes=[tile])
     _pto.TLoadOp(None, pv.ssa, tile.ssa)
 
 
 def tstore(pv, tile):
     """Store a tile buffer back to a partition view."""
+    tracker = _get_tracker()
+    if tracker:
+        pipe = PIPE.PIPE_FIX if tile.loc == ACC else PIPE.PIPE_MTE3
+        tracker.record_op(pipe, reads=[tile], writes=[])
     _pto.TStoreOp(None, tile.ssa, pv.ssa)
 
 
@@ -119,6 +172,9 @@ def tload_tile(tile_buf, tensor, tile_coord, tile_layout):
     tile_layout : TileLayout
         Layout of the tile
     """
+    tracker = _get_tracker()
+    if tracker:
+        tracker.record_op(PIPE.PIPE_MTE2, reads=[], writes=[tile_buf])
     pv = tensor.partition_at_coord(tile_coord, tile_layout)
     _pto.TLoadOp(None, pv.ssa, tile_buf.ssa)
 
@@ -137,12 +193,20 @@ def tstore_tile(pv_tensor, tile_buf, tile_coord, tile_layout):
     tile_layout : TileLayout
         Layout of the tile
     """
+    tracker = _get_tracker()
+    if tracker:
+        pipe = PIPE.PIPE_FIX if tile_buf.loc == ACC else PIPE.PIPE_MTE3
+        tracker.record_op(pipe, reads=[tile_buf], writes=[])
     pv = pv_tensor.partition_at_coord(tile_coord, tile_layout)
     _pto.TStoreOp(None, tile_buf.ssa, pv.ssa)
 
 
 def tmov(dst, src):
     """Move data between tile buffers (possibly across address spaces)."""
+    tracker = _get_tracker()
+    if tracker:
+        pipe = _tmov_pipe(dst, src)
+        tracker.record_op(pipe, reads=[src], writes=[dst])
     _pto.TMovOp(None, src.ssa, dst.ssa)
 
 
@@ -151,6 +215,9 @@ def tmov(dst, src):
 # ---------------------------------------------------------------------------
 
 def _binary(op_cls, dst, src0, src1):
+    tracker = _get_tracker()
+    if tracker:
+        tracker.record_op(PIPE.PIPE_V, reads=[src0, src1], writes=[dst])
     op_cls(src0.ssa, src1.ssa, dst.ssa)
 
 
@@ -195,6 +262,9 @@ def tmin(dst, src0, src1):
 # ---------------------------------------------------------------------------
 
 def _unary(op_cls, dst, src):
+    tracker = _get_tracker()
+    if tracker:
+        tracker.record_op(PIPE.PIPE_V, reads=[src], writes=[dst])
     op_cls(src.ssa, dst.ssa)
 
 
@@ -241,6 +311,10 @@ def tabs(dst, src):
 def _scalar_op(op_cls, dst, src, scalar):
     from ._utils import make_scalar_constant
 
+    tracker = _get_tracker()
+    if tracker:
+        tracker.record_op(PIPE.PIPE_V, reads=[src], writes=[dst])
+
     if isinstance(scalar, (int, float)):
         scalar_ssa = make_scalar_constant(scalar, src.dtype)
     elif isinstance(scalar, ScalarValue):
@@ -278,28 +352,35 @@ def tmins(dst, src, scalar):
 #  Reduction ops  (dst, src, tmp)
 # ---------------------------------------------------------------------------
 
+def _reduction(op_cls, dst, src, tmp):
+    tracker = _get_tracker()
+    if tracker:
+        tracker.record_op(PIPE.PIPE_V, reads=[src, tmp], writes=[dst])
+    op_cls(src.ssa, tmp.ssa, dst.ssa)
+
+
 def trowmax(dst, src, tmp):
-    _pto.TRowMaxOp(src.ssa, tmp.ssa, dst.ssa)
+    _reduction(_pto.TRowMaxOp, dst, src, tmp)
 
 
 def trowmin(dst, src, tmp):
-    _pto.TRowMinOp(src.ssa, tmp.ssa, dst.ssa)
+    _reduction(_pto.TRowMinOp, dst, src, tmp)
 
 
 def trowsum(dst, src, tmp):
-    _pto.TRowSumOp(src.ssa, tmp.ssa, dst.ssa)
+    _reduction(_pto.TRowSumOp, dst, src, tmp)
 
 
 def tcolmax(dst, src, tmp):
-    _pto.TColMaxOp(src.ssa, tmp.ssa, dst.ssa)
+    _reduction(_pto.TColMaxOp, dst, src, tmp)
 
 
 def tcolmin(dst, src, tmp):
-    _pto.TColMinOp(src.ssa, tmp.ssa, dst.ssa)
+    _reduction(_pto.TColMinOp, dst, src, tmp)
 
 
 def tcolsum(dst, src, tmp):
-    _pto.TColSumOp(src.ssa, tmp.ssa, dst.ssa)
+    _reduction(_pto.TColSumOp, dst, src, tmp)
 
 
 # ---------------------------------------------------------------------------
@@ -307,14 +388,26 @@ def tcolsum(dst, src, tmp):
 # ---------------------------------------------------------------------------
 
 def tmatmul(dst, lhs, rhs):
+    tracker = _get_tracker()
+    if tracker:
+        tracker.record_op(PIPE.PIPE_M, reads=[lhs, rhs], writes=[dst])
     _pto.TMatmulOp(None, lhs.ssa, rhs.ssa, dst.ssa)
 
 
 def tmatmul_acc(dst, acc, lhs, rhs):
+    tracker = _get_tracker()
+    if tracker:
+        reads = [lhs, rhs]
+        if id(acc) != id(dst):
+            reads.append(acc)
+        tracker.record_op(PIPE.PIPE_M, reads=reads, writes=[dst])
     _pto.TMatmulAccOp(None, acc.ssa, lhs.ssa, rhs.ssa, dst.ssa)
 
 
 def tmatmul_bias(dst, lhs, rhs, bias):
+    tracker = _get_tracker()
+    if tracker:
+        tracker.record_op(PIPE.PIPE_M, reads=[lhs, rhs, bias], writes=[dst])
     _pto.TMatmulBiasOp(None, lhs.ssa, rhs.ssa, bias.ssa, dst.ssa)
 
 
@@ -324,6 +417,9 @@ def tmatmul_bias(dst, lhs, rhs, bias):
 
 def ttrans(dst, src):
     """Transpose a tile into *dst* using an implementation-defined temporary."""
+    tracker = _get_tracker()
+    if tracker:
+        tracker.record_op(PIPE.PIPE_V, reads=[src], writes=[dst])
     _pto.TTransOp(src.ssa, dst.ssa)
 
 
@@ -333,21 +429,33 @@ def ttrans(dst, src):
 
 def trowexpand(dst, src):
     """Broadcast first element of each row across the entire row."""
+    tracker = _get_tracker()
+    if tracker:
+        tracker.record_op(PIPE.PIPE_V, reads=[src], writes=[dst])
     _pto.TRowExpandOp(src.ssa, dst.ssa)
 
 
 def trowexpanddiv(dst, src, div_vec):
     """Row-wise broadcast divide: dst[i,j] = src[i,j] / div_vec[i,0]."""
+    tracker = _get_tracker()
+    if tracker:
+        tracker.record_op(PIPE.PIPE_V, reads=[src, div_vec], writes=[dst])
     _pto.TRowExpandDivOp(src.ssa, div_vec.ssa, dst.ssa)
 
 
 def trowexpandmul(dst, src, mul_vec):
     """Row-wise broadcast multiply: dst[i,j] = src[i,j] * mul_vec[i,0]."""
+    tracker = _get_tracker()
+    if tracker:
+        tracker.record_op(PIPE.PIPE_V, reads=[src, mul_vec], writes=[dst])
     _pto.TRowExpandMulOp(src.ssa, mul_vec.ssa, dst.ssa)
 
 
 def trowexpandsub(dst, src, sub_vec):
     """Row-wise broadcast subtract: dst[i,j] = src[i,j] - sub_vec[i,0]."""
+    tracker = _get_tracker()
+    if tracker:
+        tracker.record_op(PIPE.PIPE_V, reads=[src, sub_vec], writes=[dst])
     _pto.TRowExpandSubOp(src.ssa, sub_vec.ssa, dst.ssa)
 
 
@@ -357,6 +465,9 @@ def trowexpandsub(dst, src, sub_vec):
 
 def tcvt(dst, src, rmode=None):
     """Convert tile element type.  *rmode* is a ``pto.RoundMode`` enum."""
+    tracker = _get_tracker()
+    if tracker:
+        tracker.record_op(PIPE.PIPE_V, reads=[src], writes=[dst])
     kwargs = {}
     if rmode is not None:
         kwargs["rmode"] = _pto.RoundModeAttr.get(rmode)

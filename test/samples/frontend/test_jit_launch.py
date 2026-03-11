@@ -43,8 +43,6 @@ def dynamic_add_kernel(
 
         m_loops = (M + (TILE_M - 1)) // TILE_M
         n_loops = (N + (TILE_N - 1)) // TILE_N
-        pto.set_flag(pto.PIPE_MTE3, pto.PIPE_V, pto.EVENT_ID1)
-        pto.set_flag(pto.PIPE_V, pto.PIPE_MTE2, pto.EVENT_ID2)
         for i in pto.range(m_loops):
             for j in pto.range(n_loops):
                 m_offset = i * TILE_M
@@ -56,20 +54,10 @@ def dynamic_add_kernel(
                                    sizes=[TILE_M, TILE_N])
                 pv_z = z.partition(offsets=[m_offset, n_offset],
                                    sizes=[TILE_M, TILE_N])
-                pto.wait_flag(pto.PIPE_V, pto.PIPE_MTE2, pto.EVENT_ID2)
                 pto.tload(tile_a, pv_x)
                 pto.tload(tile_b, pv_y)
-                # Sync: wait for DMA loads to complete before VEC compute
-                pto.set_flag(pto.PIPE_MTE2, pto.PIPE_V, pto.EVENT_ID0)
-                pto.wait_flag(pto.PIPE_MTE2, pto.PIPE_V, pto.EVENT_ID0)
-                pto.wait_flag(pto.PIPE_MTE3, pto.PIPE_V, pto.EVENT_ID1)
                 pto.tadd(tile_c, tile_a, tile_b)
-                pto.set_flag(pto.PIPE_V, pto.PIPE_MTE2, pto.EVENT_ID2)
-                # Sync: wait for VEC compute to complete before DMA store
-                pto.set_flag(pto.PIPE_V, pto.PIPE_MTE3, pto.EVENT_ID0)
-                pto.wait_flag(pto.PIPE_V, pto.PIPE_MTE3, pto.EVENT_ID0)
                 pto.tstore(pv_z, tile_c)
-                pto.set_flag(pto.PIPE_MTE3, pto.PIPE_V, pto.EVENT_ID1)
 
 
 def test_npu_launch():
@@ -79,7 +67,7 @@ def test_npu_launch():
 
     @pto.jit
     def run():
-        compiled = pto.compile(dynamic_add_kernel)
+        compiled = pto.compile(dynamic_add_kernel, auto_sync=True)
         print(f"compiled lib: {compiled.lib_path}", file=sys.stderr)
 
         device = "npu:6"

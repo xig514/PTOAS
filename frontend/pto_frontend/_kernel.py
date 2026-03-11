@@ -44,25 +44,31 @@ class KernelFunction:
 
 
     # -- IR Generation (existing, now cached) --
-    def emit_ir(self):
+    def emit_ir(self, *, auto_sync=False):
         """Trace the kernel and return the MLIR module as a string. Cached."""
         if self._ir_cache is None:
             builder = IRBuilder()
             set_builder(builder)
+            if auto_sync:
+                from ._sync_tracker import SyncTracker, set_sync_tracker, clear_sync_tracker
+                set_sync_tracker(SyncTracker())
             try:
                 self._ir_cache = self._trace(builder)
             finally:
                 builder.close()
                 clear_builder()
+                if auto_sync:
+                    from ._sync_tracker import clear_sync_tracker
+                    clear_sync_tracker()
         return self._ir_cache
 
 
     # -- C++ Emission --
-    def emit_cpp(self, *, pto_level="level3", arch="a3"):
+    def emit_cpp(self, *, pto_level="level3", arch="a3", auto_sync=False):
         """IR → C++ via ptoas subprocess. Cached."""
         if self._cpp_cache is not None:
             return self._cpp_cache
-        ir = self.emit_ir()
+        ir = self.emit_ir(auto_sync=auto_sync)
         out_dir = self._ensure_output_dir()
         pto_path = out_dir / "kernel.pto"
         cpp_path = out_dir / "kernel.cpp"
@@ -80,13 +86,13 @@ class KernelFunction:
 
 
     # -- Full Compilation --
-    def compile(self, *, pto_level="level3", arch="a3", npu_arch="dav-2201"):
+    def compile(self, *, pto_level="level3", arch="a3", npu_arch="dav-2201", auto_sync=False):
         if self._lib_path is not None and self._lib_path.exists():
             return self
         """IR → C++ → .so via ptoas + bisheng. Returns self."""
         if self._lib_path and self._lib_path.exists():
             return self
-        self.emit_cpp(pto_level=pto_level, arch=arch)
+        self.emit_cpp(pto_level=pto_level, arch=arch, auto_sync=auto_sync)
         out_dir = self._ensure_output_dir()
         caller_path = out_dir / "caller.cpp"
         lib_path = out_dir / "kernel.so"
