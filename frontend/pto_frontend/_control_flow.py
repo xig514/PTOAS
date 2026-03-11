@@ -1,5 +1,6 @@
-"""Control-flow helpers: for_range, range, and if_."""
+"""Control-flow helpers: for_range, range, if_, and else_."""
 
+import threading
 from contextlib import contextmanager
 
 from mlir.ir import InsertionPoint
@@ -7,6 +8,37 @@ from mlir.dialects import scf
 
 from ._scalar import ScalarValue
 from ._utils import ensure_index_ssa
+
+
+# ---------------------------------------------------------------------------
+#  Thread-local state for flat if_/else_ API
+# ---------------------------------------------------------------------------
+
+_tls = threading.local()
+
+
+def _get_pending_if():
+    """Return the pending (if_op, else_block) tuple, or None."""
+    return getattr(_tls, "pending_if", None)
+
+
+def _set_pending_if(if_op):
+    _tls.pending_if = if_op
+
+
+def _clear_pending_if():
+    _tls.pending_if = None
+
+
+def _finalize_pending_if():
+    """If there is a pending if_ without a matching else_, fill the else block
+    with an empty YieldOp so the SCF IfOp is well-formed."""
+    pending = _get_pending_if()
+    if pending is not None:
+        if_op = pending
+        with InsertionPoint(if_op.else_block):
+            scf.YieldOp([])
+        _clear_pending_if()
 
 
 # ---------------------------------------------------------------------------
@@ -22,6 +54,7 @@ def for_range(start, end, step=1):
         with pto.for_range(0, M, 32) as i:
             ...  # i is a ScalarValue (index)
     """
+    _finalize_pending_if()
     start_ssa = ensure_index_ssa(start)
     end_ssa = ensure_index_ssa(end)
     step_ssa = ensure_index_ssa(step)
@@ -41,6 +74,7 @@ def for_range(start, end, step=1):
         if tracker:
             tracker.finalize_loop_body(loop)
 
+        _finalize_pending_if()
         scf.YieldOp([])
     finally:
         ip.__exit__(None, None, None)
@@ -79,6 +113,7 @@ class _RangeIterator:
         self._yielded = False
 
     def __iter__(self):
+        _finalize_pending_if()
         start_ssa = ensure_index_ssa(self._start)
         stop_ssa = ensure_index_ssa(self._stop)
         step_ssa = ensure_index_ssa(self._step)
@@ -101,6 +136,8 @@ class _RangeIterator:
             return ScalarValue(self._loop.induction_variable)
 
         # Loop body tracing is done — emit backward sync, then close region.
+        _finalize_pending_if()
+
         from ._sync_tracker import get_sync_tracker
         tracker = get_sync_tracker()
         if tracker:
@@ -168,12 +205,14 @@ class _Branch:
 def if_(condition, has_else=False):
     """Emit an ``scf.if`` operation.
 
-    Simple (no else)::
+    **Flat API** (default, ``has_else`` not given)::
 
         with pto.if_(cond):
-            ...
+            ...        # then branch
+        with pto.else_():
+            ...        # else branch  (optional)
 
-    With else::
+    **Nested API** (backward-compatible, ``has_else=True``)::
 
         with pto.if_(cond, has_else=True) as (then_br, else_br):
             with then_br:
@@ -181,13 +220,17 @@ def if_(condition, has_else=False):
             with else_br:
                 ...
     """
+    _finalize_pending_if()
     cond_ssa = condition.ssa if isinstance(condition, ScalarValue) else condition
 
-    if_op = scf.IfOp(cond_ssa, [], hasElse=has_else)
-
     if has_else:
+        # Legacy nested API — unchanged
+        if_op = scf.IfOp(cond_ssa, [], hasElse=True)
         yield _Branch(if_op.then_block), _Branch(if_op.else_block)
     else:
+        # Flat API: always create with hasElse=True so else_ can fill it later
+        if_op = scf.IfOp(cond_ssa, [], hasElse=True)
+        _set_pending_if(if_op)
         ip = InsertionPoint(if_op.then_block)
         ip.__enter__()
         try:
@@ -195,3 +238,29 @@ def if_(condition, has_else=False):
             scf.YieldOp([])
         finally:
             ip.__exit__(None, None, None)
+        # Don't finalize yet — else_() may follow
+
+
+@contextmanager
+def else_():
+    """Enter the else-branch of the immediately preceding ``pto.if_()``.
+
+    Usage::
+
+        with pto.if_(cond):
+            ...        # then branch
+        with pto.else_():
+            ...        # else branch
+    """
+    pending = _get_pending_if()
+    if pending is None:
+        raise RuntimeError("pto.else_() used without a preceding pto.if_()")
+    if_op = pending
+    _clear_pending_if()
+    ip = InsertionPoint(if_op.else_block)
+    ip.__enter__()
+    try:
+        yield
+        scf.YieldOp([])
+    finally:
+        ip.__exit__(None, None, None)
