@@ -75,7 +75,8 @@ class CompiledKernel:
 #  compile()
 # ---------------------------------------------------------------------------
 
-def compile(kernel_fn, *, pto_level="level3", arch="a3", npu_arch="dav-c220-vec"):
+def compile(kernel_fn, *, pto_level="level3", arch="a3", npu_arch="dav-c220-vec",
+            auto_sync=False):
     """Compile a ``@pto.kernel`` function to a shared library.
 
     Parameters
@@ -84,13 +85,16 @@ def compile(kernel_fn, *, pto_level="level3", arch="a3", npu_arch="dav-c220-vec"
         A function decorated with ``@pto.kernel``.
     pto_level, arch, npu_arch
         Forwarded to ``kernel_fn.compile()``.
+    auto_sync : bool
+        When *True*, automatically insert pipeline synchronization ops.
 
     Returns
     -------
     CompiledKernel
         Contains ``lib_path`` and ``param_specs`` for use with :func:`launch`.
     """
-    kernel_fn.compile(pto_level=pto_level, arch=arch, npu_arch=npu_arch)
+    kernel_fn.compile(pto_level=pto_level, arch=arch, npu_arch=npu_arch,
+                      auto_sync=auto_sync)
     return CompiledKernel(
         lib_path=kernel_fn.library_path,
         param_specs=list(kernel_fn._param_specs),

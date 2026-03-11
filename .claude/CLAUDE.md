@@ -26,25 +26,24 @@ source compile.sh
 ```
 
 ## Test Commands
-### Run a ptoas testcase
+### Run a frontend testcase
 ```bash
-ptoas test/samples/FlashAttention/flash_attention_softmax.pto
+python3 test/samples/frontend/test_jit_launch.py
 ```
 
-### Run a python ir and ptoas testcase
-```bash
-cd test/samples/AddPtr
-python3 addptr.py >a.pto
-ptoas a.pto --pto-level=level3
-```
+## Pipeline and sync
+- TLOAD is PIPE_MTE2, TSTORE_ACC is PIPE_FIX, TMOV_M2L and TMOV_M2B are MTE1, TMOV_M2S and TMOV_V2M are PIPE_FIX, TMOV_M2V is PIPV, TMATMUL is PIPE_M, TVEC and TVECWAIT_EVENT is PIPE_V
+- When a buffer is used within a loop, backward synchronization is needed: at the start of each iteration, execution must wait for all associated pipelines from the previous iteration to have completed before the buffer can be reused.
 
 ## Rules
 - matmul的代码需要加with pto.section_cube():, 其他vector代码需要加with pto.section_vector():.
-- cmake command is shown in "Full configure"
-- Make sure the test case in "Run a python ir and ptoas testcase" can be executed without error.
-- Your testcase should also use ptoas to compile the ir which is generated from your new frontend. 
-- Create a new directory for all new code and donot contaminate original code. (If there is some bug in original code, it's ok to fix it). Supply compile and install scripts to install the dialect.
+- You can only edit folder frontend and test. Require for approve when you want to edit other source files.
 - The frontend representation must offer strong ergonomics and high expressiveness.
-- ptoas command needs to add argument "--pto-level=level3"
 - Temp files should be put in /data/g00895580/tmp
-- 
+- Refer to "Pipeline and sync" to get information about how to add sync op.
+- Every time after finished editting the code. Run the following testcase:
+```bash
+export HOME=/data/g00895580
+source compile.sh
+python3 test/samples/frontend/test_jit_launch.py
+```

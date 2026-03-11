@@ -29,11 +29,24 @@ def for_range(start, end, step=1):
     loop = scf.ForOp(start_ssa, end_ssa, step_ssa, [])
     ip = InsertionPoint(loop.body)
     ip.__enter__()
+
+    from ._sync_tracker import get_sync_tracker
+    tracker = get_sync_tracker()
+    if tracker:
+        tracker.enter_loop(loop)
+
     try:
         yield ScalarValue(loop.induction_variable)
+
+        if tracker:
+            tracker.finalize_loop_body(loop)
+
         scf.YieldOp([])
     finally:
         ip.__exit__(None, None, None)
+
+    if tracker:
+        tracker.emit_loop_priming(loop)
 
 
 # ---------------------------------------------------------------------------
@@ -74,15 +87,31 @@ class _RangeIterator:
         self._ip = InsertionPoint(self._loop.body)
         self._ip.__enter__()
         self._yielded = False
+
+        from ._sync_tracker import get_sync_tracker
+        tracker = get_sync_tracker()
+        if tracker:
+            tracker.enter_loop(self._loop)
+
         return self
 
     def __next__(self):
         if not self._yielded:
             self._yielded = True
             return ScalarValue(self._loop.induction_variable)
-        # Loop body tracing is done — close the scf.for region.
+
+        # Loop body tracing is done — emit backward sync, then close region.
+        from ._sync_tracker import get_sync_tracker
+        tracker = get_sync_tracker()
+        if tracker:
+            tracker.finalize_loop_body(self._loop)
+
         scf.YieldOp([])
         self._ip.__exit__(None, None, None)
+
+        if tracker:
+            tracker.emit_loop_priming(self._loop)
+
         raise StopIteration
 
 

@@ -4,7 +4,7 @@ Demonstrates:
   - @pto.kernel with DynVar dynamic shapes (M, N, K)
   - MAT → LEFT / RIGHT → ACC tile pipeline for matmul
   - Peeled first K iteration (tmatmul) + loop accumulation (tmatmul_acc)
-  - Pipeline synchronization with set_flag / wait_flag
+  - Automatic pipeline synchronization via auto_sync=True
   - pto.compile() + pto.launch() for NPU execution
   - Verification against torch.matmul reference
 
@@ -73,22 +73,13 @@ def matmul_kernel(
                 # GM → MAT (MTE2 pipe)
                 pto.tload(a_mat, pv_a0)
                 pto.tload(b_mat, pv_b0)
-                # MTE2 done → MTE1 can start
-                pto.set_flag(pto.PIPE_MTE2, pto.PIPE_MTE1, pto.EVENT_ID0)
-                pto.wait_flag(pto.PIPE_MTE2, pto.PIPE_MTE1, pto.EVENT_ID0)
 
                 # MAT → LEFT / RIGHT (MTE1 pipe)
                 pto.tmov(a_left, a_mat)
                 pto.tmov(b_right, b_mat)
-                # MTE1 done → CUBE can start
-                pto.set_flag(pto.PIPE_MTE1, pto.PIPE_M, pto.EVENT_ID0)
-                pto.wait_flag(pto.PIPE_MTE1, pto.PIPE_M, pto.EVENT_ID0)
 
                 # CUBE matmul (clears ACC first)
                 pto.tmatmul(c_acc, a_left, b_right)
-                # M done → MTE2 can reload (drain, matches tmatmulk.py)
-                pto.set_flag(pto.PIPE_M, pto.PIPE_MTE2, pto.EVENT_ID0)
-                pto.wait_flag(pto.PIPE_M, pto.PIPE_MTE2, pto.EVENT_ID0)
 
                 # ==============================================================
                 #  Remaining K tiles (k=1..k_tiles-1): tmatmul_acc — accumulates
@@ -103,33 +94,19 @@ def matmul_kernel(
                     # GM → MAT (MTE2)
                     pto.tload(a_mat, pv_a_k)
                     pto.tload(b_mat, pv_b_k)
-                    pto.set_flag(pto.PIPE_MTE2, pto.PIPE_MTE1, pto.EVENT_ID0)
-                    pto.wait_flag(pto.PIPE_MTE2, pto.PIPE_MTE1, pto.EVENT_ID0)
 
                     # MAT → LEFT / RIGHT (MTE1)
                     pto.tmov(a_left, a_mat)
                     pto.tmov(b_right, b_mat)
-                    pto.set_flag(pto.PIPE_MTE1, pto.PIPE_M, pto.EVENT_ID0)
-                    pto.wait_flag(pto.PIPE_MTE1, pto.PIPE_M, pto.EVENT_ID0)
 
                     # CUBE matmul-accumulate
                     pto.tmatmul_acc(c_acc, c_acc, a_left, b_right)
-                    # M done → MTE2 can reload (drain)
-                    pto.set_flag(pto.PIPE_M, pto.PIPE_MTE2, pto.EVENT_ID0)
-                    pto.wait_flag(pto.PIPE_M, pto.PIPE_MTE2, pto.EVENT_ID0)
 
                 # ==============================================================
                 #  Store result: ACC → GM (MTE3 pipe)
                 # ==============================================================
                 pv_c = c.partition(offsets=[m_off, n_off], sizes=[TILE, TILE])
-                # CUBE done → MTE3 can store
-                pto.set_flag(pto.PIPE_M, pto.PIPE_MTE3, pto.EVENT_ID0)
-                pto.wait_flag(pto.PIPE_M, pto.PIPE_MTE3, pto.EVENT_ID0)
                 pto.tstore(pv_c, c_acc)
-
-                # MTE3 done → next (m,n) tile's MTE2 loads are safe
-                pto.set_flag(pto.PIPE_MTE3, pto.PIPE_MTE2, pto.EVENT_ID1)
-                pto.wait_flag(pto.PIPE_MTE3, pto.PIPE_MTE2, pto.EVENT_ID1)
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +115,7 @@ def matmul_kernel(
 
 def test_ir_only():
     """Verify IR generation and ptoas compilation (no NPU needed)."""
-    ir = matmul_kernel.emit_ir()
+    ir = matmul_kernel.emit_ir(auto_sync=True)
     print(ir)
 
     checks = [
@@ -175,7 +152,8 @@ def test_npu_launch():
 
     @pto.jit
     def run():
-        compiled = pto.compile(matmul_kernel, npu_arch="dav-c220-cube")
+        compiled = pto.compile(matmul_kernel, npu_arch="dav-c220-cube",
+                               auto_sync=True)
         print(f"compiled lib: {compiled.lib_path}", file=sys.stderr)
 
         device = "npu:6"
