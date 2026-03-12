@@ -498,8 +498,25 @@ def set_flag(src_pipe, dst_pipe, event_id):
 
     Signals that operations on *src_pipe* have completed, allowing
     *dst_pipe* to proceed.  Accepts ``PIPE`` and ``EVENT`` enums.
+
+    If *event_id* is from EventIdGroup[ScalarValue], automatically
+    generates conditional branches for runtime EVENT_ID selection.
     """
     from mlir.dialects.pto import PipeAttr, EventAttr, PIPE, EVENT
+    from ._event_group import _DynamicEventSelection
+
+    # Check if this is a dynamic event selection
+    if isinstance(event_id, _DynamicEventSelection):
+        # Generate conditional code: if idx==0: set_flag(ID0) else: set_flag(ID1) ...
+        def emit_set(evt):
+            src = PipeAttr.get(src_pipe) if isinstance(src_pipe, PIPE) else src_pipe
+            dst = PipeAttr.get(dst_pipe) if isinstance(dst_pipe, PIPE) else dst_pipe
+            evt_attr = EventAttr.get(evt) if isinstance(evt, EVENT) else evt
+            _pto.SetFlagOp(src_pipe=src, dst_pipe=dst, event_id=evt_attr)
+        event_id.emit_conditional(emit_set)
+        return
+
+    # Normal path: static EVENT_ID
     src = PipeAttr.get(src_pipe) if isinstance(src_pipe, PIPE) else src_pipe
     dst = PipeAttr.get(dst_pipe) if isinstance(dst_pipe, PIPE) else dst_pipe
     evt = EventAttr.get(event_id) if isinstance(event_id, EVENT) else event_id
@@ -511,8 +528,25 @@ def wait_flag(src_pipe, dst_pipe, event_id):
 
     Blocks *dst_pipe* until the matching ``set_flag`` from *src_pipe*
     has been issued.  Accepts ``PIPE`` and ``EVENT`` enums.
+
+    If *event_id* is from EventIdGroup[ScalarValue], automatically
+    generates conditional branches for runtime EVENT_ID selection.
     """
     from mlir.dialects.pto import PipeAttr, EventAttr, PIPE, EVENT
+    from ._event_group import _DynamicEventSelection
+
+    # Check if this is a dynamic event selection
+    if isinstance(event_id, _DynamicEventSelection):
+        # Generate conditional code: if idx==0: wait_flag(ID0) else: wait_flag(ID1) ...
+        def emit_wait(evt):
+            src = PipeAttr.get(src_pipe) if isinstance(src_pipe, PIPE) else src_pipe
+            dst = PipeAttr.get(dst_pipe) if isinstance(dst_pipe, PIPE) else dst_pipe
+            evt_attr = EventAttr.get(evt) if isinstance(evt, EVENT) else evt
+            _pto.WaitFlagOp(src_pipe=src, dst_pipe=dst, event_id=evt_attr)
+        event_id.emit_conditional(emit_wait)
+        return
+
+    # Normal path: static EVENT_ID
     src = PipeAttr.get(src_pipe) if isinstance(src_pipe, PIPE) else src_pipe
     dst = PipeAttr.get(dst_pipe) if isinstance(dst_pipe, PIPE) else dst_pipe
     evt = EventAttr.get(event_id) if isinstance(event_id, EVENT) else event_id
