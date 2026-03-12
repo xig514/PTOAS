@@ -1,4 +1,4 @@
-export PYTHON3=/data/g00895580/miniconda3/bin/python3.12
+export python3=/data/g00895580/miniconda3/bin/python3.12
 export WORKSPACE_DIR=/data/g00895580/ptoas/
 export PTO_SOURCE_DIR=$WORKSPACE_DIR/PTOAS
 export PTO_INSTALL_DIR=$PTO_SOURCE_DIR/install
