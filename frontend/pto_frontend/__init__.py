@@ -79,7 +79,7 @@ from ._split_utils import split_even, split_causal, split_sequential, split_even
 # -- address-space & sync constants --
 from ._constants import (
     VEC, MAT, LEFT, RIGHT, ACC, GM, BIAS, SCALING,
-    PIPE_MTE1, PIPE_MTE2, PIPE_MTE3, PIPE_V, PIPE_M, PIPE_ALL,
+    PIPE_MTE1, PIPE_MTE2, PIPE_MTE3, PIPE_V, PIPE_M, PIPE_FIX, PIPE_ALL,
     TLOAD, TSTORE_ACC, TSTORE_VEC,
     TMOV_M2L, TMOV_M2S, TMOV_M2B, TMOV_M2V, TMOV_V2M,
     TMATMUL, TVEC, TVECWAIT_EVENT,
