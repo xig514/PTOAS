@@ -65,6 +65,9 @@ from ._control_flow import for_range, range, if_, else_
 # -- tile group (dynamic buffer selection) --
 from ._tile_group import TileGroup
 
+# -- event group (dynamic EVENT_ID selection) --
+from ._event_group import EventIdGroup
+
 # -- section guards --
 from ._section import section_vector, section_cube
 
