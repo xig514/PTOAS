@@ -3,6 +3,7 @@ import inspect
 import os
 import pathlib
 import subprocess
+from enum import Enum
 
 from mlir.ir import InsertionPoint, IndexType, F32Type, IntegerType
 from mlir.dialects import func
@@ -23,6 +24,7 @@ _DTYPE_TO_CPP = {
     "int32": "int32_t",
     "int64": "int64_t",
 }
+
 
 class KernelFunction:
     """Wrapper returned by ``@pto.kernel``.
@@ -86,7 +88,10 @@ class KernelFunction:
 
 
     # -- Full Compilation --
-    def compile(self, *, pto_level="level3", arch="a3", npu_arch="dav-2201", auto_sync=False):
+    def compile(self, *, pto_level="level3", arch="a3", auto_sync=False):
+        if (arch not in ("a2", "a3", "a5")):
+            raise ValueError(f"Unsupported arch '{arch}'. Supported: a2, a3, a5.")
+        
         if self._lib_path is not None and self._lib_path.exists():
             return self
         """IR → C++ → .so via ptoas + bisheng. Returns self."""
@@ -100,6 +105,29 @@ class KernelFunction:
         caller_path.write_text(
             self._generate_caller_cpp("kernel.cpp"), encoding="utf-8"
         )
+        npu_arch = ""
+        if self._cpp_cache:
+            if "__DAV_CUBE__" in self._cpp_cache and "__DAV_VEC__" in self._cpp_cache:
+                if arch == "a3" or arch == "a2":
+                    npu_arch = "dav-c220"
+                elif arch == "a5":
+                    npu_arch = "dav-c310"
+
+            elif "__DAV_CUBE__" in self._cpp_cache:
+                if arch == "a3" or arch == "a2":
+                    npu_arch = "dav-c220-cube"
+                elif arch == "a5":
+                    npu_arch = "dav-c310-cube"
+                    
+
+            elif "__DAV_VEC__" in self._cpp_cache:
+                if arch == "a3" or arch == "a2":
+                    npu_arch = "dav-c220-vec"
+                elif arch == "a5":
+                    npu_arch = "dav-c310-vec"
+        else:
+            return self
+
         self._compile_with_bisheng(caller_path, lib_path, npu_arch)
         self._lib_path = lib_path
         return self
@@ -175,20 +203,26 @@ class KernelFunction:
         # that the guarded code is actually compiled (section_cube emits
         # #if defined(__DAV_CUBE__), section_vector emits __DAV_VEC__).
         dav_defines = []
-        if self._cpp_cache:
+        if self._cpp_cache and npu_arch != "dav-c220":
+            dav_defines.append("-shared")
             if "__DAV_CUBE__" in self._cpp_cache:
                 dav_defines.append("-D__DAV_CUBE__")
-            if "__DAV_VEC__" in self._cpp_cache:
+            elif "__DAV_VEC__" in self._cpp_cache:
                 dav_defines.append("-D__DAV_VEC__")
+            tmp_lib_path = lib_path
+        else:
+            out_dir = self._ensure_output_dir()
+            tmp_lib_path = out_dir / "kernel.o"
+            dav_defines.append("-c")
 
         cmd = [
             "bisheng",
             f"-I{toolkit_home}/include",
             "-fPIC",
-            "-shared",
             "-D_FORTIFY_SOURCE=2",
             "-O2",
             "-std=c++17",
+            "-std=gnu++17",
             "-Wno-macro-redefined",
             "-Wno-ignored-attributes",
             "-fstack-protector-strong",
@@ -204,10 +238,23 @@ class KernelFunction:
             "-DMEMORY_BASE",
             *dav_defines,
             str(caller_path),
-            "-o", str(lib_path),
+            "-o", str(tmp_lib_path),
         ]
         print("CMD:", " ".join(cmd) if isinstance(cmd, list) else cmd)
         subprocess.run(cmd, check=True, cwd=str(self._ensure_output_dir()))
+        if npu_arch == "dav-c220":
+            # 融合算子还需要链接一下生成的 kernel.o，才能得到包含融合算子的 .so
+            cmd = [
+                "bisheng",
+                "-fPIC",
+                "-s", "-Wl,-z,relro", "-Wl,-z,now",
+                "--cce-fatobj-link",
+                "-shared", "-Wl,-soname," + str(lib_path.name),
+                "-o", str(lib_path),
+                str(tmp_lib_path),
+            ]
+            subprocess.run(cmd, check=True, cwd=str(self._ensure_output_dir()))
+
 
     def _trace(self, builder):
         hints = {

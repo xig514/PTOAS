@@ -347,14 +347,14 @@ def test_npu_launch(db = True, auto_sync = False):
     @pto.jit
     def run():
         if auto_sync == True:
-            compiled = pto.compile(matmul_kernel_double_buffer_no_sync, npu_arch="dav-c220-cube",
+            compiled = pto.compile(matmul_kernel_double_buffer_no_sync,
                                     auto_sync=auto_sync)
         else:
             if db == True:
-                compiled = pto.compile(matmul_kernel_double_buffer, npu_arch="dav-c220-cube",
+                compiled = pto.compile(matmul_kernel_double_buffer,
                                     auto_sync=auto_sync)
             else:
-                compiled = pto.compile(matmul_kernel, npu_arch="dav-c220-cube",
+                compiled = pto.compile(matmul_kernel,
                                     auto_sync=auto_sync)
         print(f"compiled lib: {compiled.lib_path}", file=sys.stderr)
 
@@ -408,14 +408,9 @@ def test_npu_launch(db = True, auto_sync = False):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    if "--ir-only" in sys.argv:
-        test_ir_only()
-    else:
-        try:
-            # test_npu_launch(db = True)
-            # test_npu_launch(db = False)
-            test_npu_launch(db = True, auto_sync = True)
-        except (ImportError, RuntimeError) as e:
-            print(f"NPU not available ({e}), falling back to IR-only test.",
-                  file=sys.stderr)
-            test_ir_only()
+    try:
+        test_npu_launch(db = True)
+        test_npu_launch(db = True, auto_sync = True)
+    except (ImportError, RuntimeError) as e:
+        print(f"NPU not available ({e}), falling back to IR-only test.",
+                file=sys.stderr)

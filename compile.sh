@@ -17,7 +17,6 @@ ninja -C build -j128
 ninja -C build install
 
 
-name=g00895580
-source /data/$name/Ascend/cann/bin/setenv.bash
-source /data/$name/Ascend/cann-8.5.0/set_env.sh
-source /data/$name/Ascend/ascend-toolkit/set_env.sh
+source /data/g00895580/Ascend/cann/bin/setenv.bash
+source /data/g00895580/Ascend/cann-8.5.0/set_env.sh
+source /data/g00895580/Ascend/ascend-toolkit/set_env.sh
