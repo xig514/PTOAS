@@ -463,6 +463,14 @@ PY
       fi
     fi
 
+    if [[ "$base" == "assemble" ]]; then
+      if ! grep -Fq "TINSERT(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing TINSERT() lowering for pto.tassemble"
+        overall=1
+        continue
+      fi
+    fi
+
     if [[ "$base" == "fillpad" ]]; then
       if ! grep -Fq "TFILLPAD(" "$cpp"; then
         echo -e "${A}(${base}.py)\tFAIL\tmissing TFILLPAD() lowering for pto.tfillpad"
