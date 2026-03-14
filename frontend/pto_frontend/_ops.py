@@ -558,13 +558,38 @@ def wait_flag(src_pipe, dst_pipe, event_id):
 # ---------------------------------------------------------------------------
 
 def get_block_idx():
-    """Return the current block (core) index as a ScalarValue."""
-    return ScalarValue(_pto.GetBlockIdxOp().result)
+    """Return the current block (core) index as a ScalarValue (index type)."""
+    from mlir.ir import IndexType
+    val = _pto.GetBlockIdxOp().result
+    val = arith.IndexCastOp(IndexType.get(), val).result
+    return ScalarValue(val)
 
 
 def get_block_num():
-    """Return the total number of blocks as a ScalarValue."""
-    return ScalarValue(_pto.GetBlockNumOp().result)
+    """Return the total number of blocks as a ScalarValue (index type)."""
+    from mlir.ir import IndexType
+    val = _pto.GetBlockNumOp().result
+    val = arith.IndexCastOp(IndexType.get(), val).result
+    return ScalarValue(val)
+
+
+def get_subblock_idx():
+    """Return the current sub-block (vector core) index as a ScalarValue (index type).
+
+    On Ascend NPU each Cube core has 2 Vector sub-blocks (index 0 or 1).
+    """
+    from mlir.ir import IndexType
+    val = _pto.GetSubBlockIdxOp().result
+    val = arith.IndexCastOp(IndexType.get(), val).result
+    return ScalarValue(val)
+
+
+def get_subblock_num():
+    """Return the total number of sub-blocks per block as a ScalarValue (index type)."""
+    from mlir.ir import IndexType
+    val = _pto.GetSubBlockNumOp().result
+    val = arith.IndexCastOp(IndexType.get(), val).result
+    return ScalarValue(val)
 
 
 # ---------------------------------------------------------------------------
