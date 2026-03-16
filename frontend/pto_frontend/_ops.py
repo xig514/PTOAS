@@ -493,6 +493,44 @@ def barrier_sync(op_type):
     _pto.barrier(op_type)
 
 
+def sync_set(pipe, event_id):
+    """Emit ``pto.sync.set`` for cross-core (cube↔vector) synchronization.
+
+    Signals that operations on the specified pipeline have completed,
+    allowing the other core type to proceed.
+    Lowers to ``ffts_cross_core_sync`` (A3) or ``set_intra_block`` (A5).
+
+    Parameters
+    ----------
+    pipe : PIPE enum
+        Pipeline that has completed (e.g. ``PIPE_FIX``, ``PIPE_M``).
+    event_id : int
+        Synchronization event identifier.
+    """
+    from mlir.dialects.pto import PipeAttr, PIPE as _PIPE
+    p = PipeAttr.get(pipe) if isinstance(pipe, _PIPE) else pipe
+    _pto.SyncSetOp(pipe=p, event_id=event_id)
+
+
+def sync_wait(pipe, event_id):
+    """Emit ``pto.sync.wait`` for cross-core (cube↔vector) synchronization.
+
+    Blocks the current core until the matching ``sync_set`` from the
+    other core type has been issued.
+    Lowers to ``wait_flag_dev`` (A3) or ``wait_intra_block`` (A5).
+
+    Parameters
+    ----------
+    pipe : PIPE enum
+        Pipeline to wait on (e.g. ``PIPE_V``, ``PIPE_M``).
+    event_id : int
+        Synchronization event identifier (must match the ``sync_set``).
+    """
+    from mlir.dialects.pto import PipeAttr, PIPE as _PIPE
+    p = PipeAttr.get(pipe) if isinstance(pipe, _PIPE) else pipe
+    _pto.SyncWaitOp(pipe=p, event_id=event_id)
+
+
 def set_flag(src_pipe, dst_pipe, event_id):
     """Emit ``pto.set_flag`` for low-level pipeline synchronization.
 

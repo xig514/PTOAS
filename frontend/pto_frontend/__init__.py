@@ -49,6 +49,7 @@ from ._ops import (
     tcvt,
     # sync
     record_event, wait_event, barrier_sync,
+    sync_set, sync_wait,
     set_flag, wait_flag,
     # system
     get_block_idx, get_block_num, get_subblock_idx, get_subblock_num,
