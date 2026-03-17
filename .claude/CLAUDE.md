@@ -48,6 +48,7 @@ python3 test/samples/frontend/test_jit_launch.py
 - Temp files should be put in /data/g00895580/tmp
 - Refer to "Pipeline and sync" to get information about how to add sync op.
 - Every time after finished editting the code. Run the following testcase:
+- pto.VEC is 192KB on a2 and a3, and 248KB on a5; pto.MAT is 512KB on a2/a3/a5; pto.LEFT and pto.RIGHT are 64KB; pto.ACC is 128KB on a2 and a3 and 256KB on a5.
 ```bash
 export HOME=/data/g00895580
 source compile.sh

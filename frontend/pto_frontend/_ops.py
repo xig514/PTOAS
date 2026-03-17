@@ -141,21 +141,53 @@ def make_tile(shape, dtype, loc, addr=0, *,
 #  DMA ops  (dst, src)
 # ---------------------------------------------------------------------------
 
-def tload(tile, pv):
-    """Load from a partition view into a tile buffer."""
+def tload(tile, src, offsets=None):
+    """Load from a partition view (or tensor with offsets) into a tile buffer.
+
+    Parameters
+    ----------
+    tile : Tile
+        Destination tile buffer.
+    src : _PartitionView or _TensorProxy
+        Source data. If a ``_TensorProxy`` is given, *offsets* must be provided
+        and a partition is created internally using ``tile.shape`` as sizes.
+    offsets : list[int|ScalarValue], optional
+        When *src* is a ``_TensorProxy``, element offsets for each dimension.
+        Sizes are inferred from ``tile.shape``.
+    """
+    from ._tensor import _TensorProxy
+    if offsets is not None and isinstance(src, _TensorProxy):
+        pv = src.partition(offsets=offsets, sizes=list(tile.shape))
+        src = pv
     tracker = _get_tracker()
     if tracker:
         tracker.record_op(PIPE.PIPE_MTE2, reads=[], writes=[tile])
-    _pto.TLoadOp(None, pv.ssa, tile.ssa)
+    _pto.TLoadOp(None, src.ssa, tile.ssa)
 
 
-def tstore(pv, tile):
-    """Store a tile buffer back to a partition view."""
+def tstore(dst, tile, offsets=None):
+    """Store a tile buffer back to a partition view (or tensor with offsets).
+
+    Parameters
+    ----------
+    dst : _PartitionView or _TensorProxy
+        Destination. If a ``_TensorProxy`` is given, *offsets* must be provided
+        and a partition is created internally using ``tile.shape`` as sizes.
+    tile : Tile
+        Source tile buffer.
+    offsets : list[int|ScalarValue], optional
+        When *dst* is a ``_TensorProxy``, element offsets for each dimension.
+        Sizes are inferred from ``tile.shape``.
+    """
+    from ._tensor import _TensorProxy
+    if offsets is not None and isinstance(dst, _TensorProxy):
+        pv = dst.partition(offsets=offsets, sizes=list(tile.shape))
+        dst = pv
     tracker = _get_tracker()
     if tracker:
         pipe = PIPE.PIPE_FIX if tile.loc == ACC else PIPE.PIPE_MTE3
         tracker.record_op(pipe, reads=[tile], writes=[])
-    _pto.TStoreOp(None, tile.ssa, pv.ssa)
+    _pto.TStoreOp(None, tile.ssa, dst.ssa)
 
 
 def tload_tile(tile_buf, tensor, tile_coord, tile_layout):
