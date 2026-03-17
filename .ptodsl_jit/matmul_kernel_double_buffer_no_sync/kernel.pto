@@ -1,0 +1,412 @@
+module {
+  func.func @matmul_kernel_double_buffer_no_sync(%arg0: !pto.ptr<f16>, %arg1: index, %arg2: index, %arg3: !pto.ptr<f16>, %arg4: index, %arg5: index, %arg6: !pto.ptr<f16>, %arg7: index, %arg8: index) {
+    pto.section.cube {
+      %c0_i64 = arith.constant 0 : i64
+      %0 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+      %c8192_i64 = arith.constant 8192 : i64
+      %1 = pto.alloc_tile addr = %c8192_i64 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+      %c16384_i64 = arith.constant 16384 : i64
+      %2 = pto.alloc_tile addr = %c16384_i64 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+      %c24576_i64 = arith.constant 24576 : i64
+      %3 = pto.alloc_tile addr = %c24576_i64 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+      %c0_i64_0 = arith.constant 0 : i64
+      %4 = pto.alloc_tile addr = %c0_i64_0 : !pto.tile_buf<loc=left, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+      %c8192_i64_1 = arith.constant 8192 : i64
+      %5 = pto.alloc_tile addr = %c8192_i64_1 : !pto.tile_buf<loc=left, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+      %c0_i64_2 = arith.constant 0 : i64
+      %6 = pto.alloc_tile addr = %c0_i64_2 : !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+      %c8192_i64_3 = arith.constant 8192 : i64
+      %7 = pto.alloc_tile addr = %c8192_i64_3 : !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+      %c0_i64_4 = arith.constant 0 : i64
+      %8 = pto.alloc_tile addr = %c0_i64_4 : !pto.tile_buf<loc=acc, dtype=f32, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+      %c16384_i64_5 = arith.constant 16384 : i64
+      %9 = pto.alloc_tile addr = %c16384_i64_5 : !pto.tile_buf<loc=acc, dtype=f32, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+      %c63 = arith.constant 63 : index
+      %10 = arith.addi %arg1, %c63 : index
+      %c64 = arith.constant 64 : index
+      %11 = arith.divsi %10, %c64 : index
+      %c63_6 = arith.constant 63 : index
+      %12 = arith.addi %arg5, %c63_6 : index
+      %c64_7 = arith.constant 64 : index
+      %13 = arith.divsi %12, %c64_7 : index
+      %c63_8 = arith.constant 63 : index
+      %14 = arith.addi %arg2, %c63_8 : index
+      %c64_9 = arith.constant 64 : index
+      %15 = arith.divsi %14, %c64_9 : index
+      %c0 = arith.constant 0 : index
+      %c1 = arith.constant 1 : index
+      scf.for %arg9 = %c0 to %11 step %c1 {
+        %c0_10 = arith.constant 0 : index
+        %c1_11 = arith.constant 1 : index
+        pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+        pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID1>]
+        pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+        pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+        pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID0>]
+        pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID1>]
+        scf.for %arg10 = %c0_10 to %13 step %c1_11 {
+          %c64_12 = arith.constant 64 : index
+          %16 = arith.muli %arg9, %c64_12 : index
+          %c64_13 = arith.constant 64 : index
+          %17 = arith.muli %arg10, %c64_13 : index
+          %18 = arith.muli %arg9, %13 : index
+          %19 = arith.addi %18, %arg10 : index
+          %c2 = arith.constant 2 : index
+          %20 = arith.remsi %19, %c2 : index
+          %c0_14 = arith.constant 0 : index
+          %21 = arith.cmpi eq, %20, %c0_14 : index
+          scf.if %21 {
+            pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+          } else {
+            pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+          }
+          %c0_15 = arith.constant 0 : index
+          %22 = arith.cmpi eq, %20, %c0_15 : index
+          scf.if %22 {
+            pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID0>]
+          } else {
+            pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID1>]
+          }
+          %23 = arith.muli %arg9, %13 : index
+          %24 = arith.addi %23, %arg10 : index
+          %c2_16 = arith.constant 2 : index
+          %25 = arith.remsi %24, %c2_16 : index
+          %c0_17 = arith.constant 0 : index
+          %26 = arith.cmpi eq, %25, %c0_17 : index
+          scf.if %26 {
+            pto.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+          } else {
+            pto.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID1>]
+          }
+          %c0_18 = arith.constant 0 : index
+          %c64_19 = arith.constant 64 : index
+          %c64_20 = arith.constant 64 : index
+          %c1_21 = arith.constant 1 : index
+          %27 = arith.muli %arg2, %c1_21 : index
+          %28 = pto.make_tensor_view %arg0, shape = [%arg1, %arg2], strides = [%27, %c1_21] : !pto.tensor_view<?x?xf16>
+          %29 = pto.partition_view %28, offsets = [%16, %c0_18], sizes = [%c64_19, %c64_20] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<64x64xf16>
+          %c0_22 = arith.constant 0 : index
+          %c64_23 = arith.constant 64 : index
+          %c64_24 = arith.constant 64 : index
+          %c1_25 = arith.constant 1 : index
+          %30 = arith.muli %arg5, %c1_25 : index
+          %31 = pto.make_tensor_view %arg3, shape = [%arg4, %arg5], strides = [%30, %c1_25] : !pto.tensor_view<?x?xf16>
+          %32 = pto.partition_view %31, offsets = [%c0_22, %17], sizes = [%c64_23, %c64_24] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<64x64xf16>
+          %c0_i64_26 = arith.constant 0 : i64
+          %c8192_i64_27 = arith.constant 8192 : i64
+          %c0_28 = arith.constant 0 : index
+          %33 = arith.cmpi eq, %20, %c0_28 : index
+          %34 = arith.select %33, %c0_i64_26, %c8192_i64_27 : i64
+          %35 = pto.alloc_tile addr = %34 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+          pto.tload ins(%29 : !pto.partition_tensor_view<64x64xf16>) outs(%35 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+          %c16384_i64_29 = arith.constant 16384 : i64
+          %c24576_i64_30 = arith.constant 24576 : i64
+          %c0_31 = arith.constant 0 : index
+          %36 = arith.cmpi eq, %20, %c0_31 : index
+          %37 = arith.select %36, %c16384_i64_29, %c24576_i64_30 : i64
+          %38 = pto.alloc_tile addr = %37 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+          pto.tload ins(%32 : !pto.partition_tensor_view<64x64xf16>) outs(%38 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+          %c0_i64_32 = arith.constant 0 : i64
+          %c8192_i64_33 = arith.constant 8192 : i64
+          %c0_34 = arith.constant 0 : index
+          %39 = arith.cmpi eq, %20, %c0_34 : index
+          %40 = arith.select %39, %c0_i64_32, %c8192_i64_33 : i64
+          %41 = pto.alloc_tile addr = %40 : !pto.tile_buf<loc=left, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+          %c0_i64_35 = arith.constant 0 : i64
+          %c8192_i64_36 = arith.constant 8192 : i64
+          %c0_37 = arith.constant 0 : index
+          %42 = arith.cmpi eq, %20, %c0_37 : index
+          %43 = arith.select %42, %c0_i64_35, %c8192_i64_36 : i64
+          %44 = pto.alloc_tile addr = %43 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+          %c0_38 = arith.constant 0 : index
+          %45 = arith.cmpi eq, %20, %c0_38 : index
+          scf.if %45 {
+            pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+          } else {
+            pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
+          }
+          %c0_39 = arith.constant 0 : index
+          %46 = arith.cmpi eq, %20, %c0_39 : index
+          scf.if %46 {
+            pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+          } else {
+            pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
+          }
+          pto.tmov ins(%44 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>) outs(%41 : !pto.tile_buf<loc=left, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>)
+          %c0_i64_40 = arith.constant 0 : i64
+          %c8192_i64_41 = arith.constant 8192 : i64
+          %c0_42 = arith.constant 0 : index
+          %47 = arith.cmpi eq, %20, %c0_42 : index
+          %48 = arith.select %47, %c0_i64_40, %c8192_i64_41 : i64
+          %49 = pto.alloc_tile addr = %48 : !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+          %c16384_i64_43 = arith.constant 16384 : i64
+          %c24576_i64_44 = arith.constant 24576 : i64
+          %c0_45 = arith.constant 0 : index
+          %50 = arith.cmpi eq, %20, %c0_45 : index
+          %51 = arith.select %50, %c16384_i64_43, %c24576_i64_44 : i64
+          %52 = pto.alloc_tile addr = %51 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+          %c0_46 = arith.constant 0 : index
+          %53 = arith.cmpi eq, %20, %c0_46 : index
+          scf.if %53 {
+            pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+          } else {
+            pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
+          }
+          %c0_47 = arith.constant 0 : index
+          %54 = arith.cmpi eq, %20, %c0_47 : index
+          scf.if %54 {
+            pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+          } else {
+            pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
+          }
+          pto.tmov ins(%52 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>) outs(%49 : !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+          %c0_i64_48 = arith.constant 0 : i64
+          %c16384_i64_49 = arith.constant 16384 : i64
+          %c0_50 = arith.constant 0 : index
+          %55 = arith.cmpi eq, %25, %c0_50 : index
+          %56 = arith.select %55, %c0_i64_48, %c16384_i64_49 : i64
+          %57 = pto.alloc_tile addr = %56 : !pto.tile_buf<loc=acc, dtype=f32, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+          %c0_i64_51 = arith.constant 0 : i64
+          %c8192_i64_52 = arith.constant 8192 : i64
+          %c0_53 = arith.constant 0 : index
+          %58 = arith.cmpi eq, %20, %c0_53 : index
+          %59 = arith.select %58, %c0_i64_51, %c8192_i64_52 : i64
+          %60 = pto.alloc_tile addr = %59 : !pto.tile_buf<loc=left, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+          %c0_i64_54 = arith.constant 0 : i64
+          %c8192_i64_55 = arith.constant 8192 : i64
+          %c0_56 = arith.constant 0 : index
+          %61 = arith.cmpi eq, %20, %c0_56 : index
+          %62 = arith.select %61, %c0_i64_54, %c8192_i64_55 : i64
+          %63 = pto.alloc_tile addr = %62 : !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+          %c0_57 = arith.constant 0 : index
+          %64 = arith.cmpi eq, %20, %c0_57 : index
+          scf.if %64 {
+            pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+          } else {
+            pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
+          }
+          %c0_58 = arith.constant 0 : index
+          %65 = arith.cmpi eq, %20, %c0_58 : index
+          scf.if %65 {
+            pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+          } else {
+            pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
+          }
+          pto.tmatmul ins(%60, %63 : !pto.tile_buf<loc=left, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%57 : !pto.tile_buf<loc=acc, dtype=f32, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+          %c1_59 = arith.constant 1 : index
+          %c1_60 = arith.constant 1 : index
+          scf.for %arg11 = %c1_59 to %15 step %c1_60 {
+            %c1_72 = arith.constant 1 : index
+            %77 = arith.addi %20, %c1_72 : index
+            %c2_73 = arith.constant 2 : index
+            %78 = arith.remsi %77, %c2_73 : index
+            %c0_74 = arith.constant 0 : index
+            %79 = arith.cmpi eq, %78, %c0_74 : index
+            scf.if %79 {
+              pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+            } else {
+              pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+            }
+            %c0_75 = arith.constant 0 : index
+            %80 = arith.cmpi eq, %78, %c0_75 : index
+            scf.if %80 {
+              pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID0>]
+            } else {
+              pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID1>]
+            }
+            %c64_76 = arith.constant 64 : index
+            %81 = arith.muli %arg11, %c64_76 : index
+            %c64_77 = arith.constant 64 : index
+            %c64_78 = arith.constant 64 : index
+            %c1_79 = arith.constant 1 : index
+            %82 = arith.muli %arg2, %c1_79 : index
+            %83 = pto.make_tensor_view %arg0, shape = [%arg1, %arg2], strides = [%82, %c1_79] : !pto.tensor_view<?x?xf16>
+            %84 = pto.partition_view %83, offsets = [%16, %81], sizes = [%c64_77, %c64_78] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<64x64xf16>
+            %c64_80 = arith.constant 64 : index
+            %c64_81 = arith.constant 64 : index
+            %c1_82 = arith.constant 1 : index
+            %85 = arith.muli %arg5, %c1_82 : index
+            %86 = pto.make_tensor_view %arg3, shape = [%arg4, %arg5], strides = [%85, %c1_82] : !pto.tensor_view<?x?xf16>
+            %87 = pto.partition_view %86, offsets = [%81, %17], sizes = [%c64_80, %c64_81] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<64x64xf16>
+            %c0_i64_83 = arith.constant 0 : i64
+            %c8192_i64_84 = arith.constant 8192 : i64
+            %c0_85 = arith.constant 0 : index
+            %88 = arith.cmpi eq, %78, %c0_85 : index
+            %89 = arith.select %88, %c0_i64_83, %c8192_i64_84 : i64
+            %90 = pto.alloc_tile addr = %89 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+            pto.tload ins(%84 : !pto.partition_tensor_view<64x64xf16>) outs(%90 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+            %c16384_i64_86 = arith.constant 16384 : i64
+            %c24576_i64_87 = arith.constant 24576 : i64
+            %c0_88 = arith.constant 0 : index
+            %91 = arith.cmpi eq, %78, %c0_88 : index
+            %92 = arith.select %91, %c16384_i64_86, %c24576_i64_87 : i64
+            %93 = pto.alloc_tile addr = %92 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+            pto.tload ins(%87 : !pto.partition_tensor_view<64x64xf16>) outs(%93 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+            %c0_i64_89 = arith.constant 0 : i64
+            %c8192_i64_90 = arith.constant 8192 : i64
+            %c0_91 = arith.constant 0 : index
+            %94 = arith.cmpi eq, %78, %c0_91 : index
+            %95 = arith.select %94, %c0_i64_89, %c8192_i64_90 : i64
+            %96 = pto.alloc_tile addr = %95 : !pto.tile_buf<loc=left, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+            %c0_i64_92 = arith.constant 0 : i64
+            %c8192_i64_93 = arith.constant 8192 : i64
+            %c0_94 = arith.constant 0 : index
+            %97 = arith.cmpi eq, %78, %c0_94 : index
+            %98 = arith.select %97, %c0_i64_92, %c8192_i64_93 : i64
+            %99 = pto.alloc_tile addr = %98 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+            %c0_95 = arith.constant 0 : index
+            %100 = arith.cmpi eq, %78, %c0_95 : index
+            scf.if %100 {
+              pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+            } else {
+              pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
+            }
+            %c0_96 = arith.constant 0 : index
+            %101 = arith.cmpi eq, %78, %c0_96 : index
+            scf.if %101 {
+              pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+            } else {
+              pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
+            }
+            pto.tmov ins(%99 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>) outs(%96 : !pto.tile_buf<loc=left, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>)
+            %c0_i64_97 = arith.constant 0 : i64
+            %c8192_i64_98 = arith.constant 8192 : i64
+            %c0_99 = arith.constant 0 : index
+            %102 = arith.cmpi eq, %78, %c0_99 : index
+            %103 = arith.select %102, %c0_i64_97, %c8192_i64_98 : i64
+            %104 = pto.alloc_tile addr = %103 : !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+            %c16384_i64_100 = arith.constant 16384 : i64
+            %c24576_i64_101 = arith.constant 24576 : i64
+            %c0_102 = arith.constant 0 : index
+            %105 = arith.cmpi eq, %78, %c0_102 : index
+            %106 = arith.select %105, %c16384_i64_100, %c24576_i64_101 : i64
+            %107 = pto.alloc_tile addr = %106 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+            %c0_103 = arith.constant 0 : index
+            %108 = arith.cmpi eq, %78, %c0_103 : index
+            scf.if %108 {
+              pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+            } else {
+              pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
+            }
+            %c0_104 = arith.constant 0 : index
+            %109 = arith.cmpi eq, %78, %c0_104 : index
+            scf.if %109 {
+              pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+            } else {
+              pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
+            }
+            pto.tmov ins(%107 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>) outs(%104 : !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+            %c0_i64_105 = arith.constant 0 : i64
+            %c16384_i64_106 = arith.constant 16384 : i64
+            %c0_107 = arith.constant 0 : index
+            %110 = arith.cmpi eq, %25, %c0_107 : index
+            %111 = arith.select %110, %c0_i64_105, %c16384_i64_106 : i64
+            %112 = pto.alloc_tile addr = %111 : !pto.tile_buf<loc=acc, dtype=f32, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+            %c0_i64_108 = arith.constant 0 : i64
+            %c16384_i64_109 = arith.constant 16384 : i64
+            %c0_110 = arith.constant 0 : index
+            %113 = arith.cmpi eq, %25, %c0_110 : index
+            %114 = arith.select %113, %c0_i64_108, %c16384_i64_109 : i64
+            %115 = pto.alloc_tile addr = %114 : !pto.tile_buf<loc=acc, dtype=f32, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+            %c0_i64_111 = arith.constant 0 : i64
+            %c8192_i64_112 = arith.constant 8192 : i64
+            %c0_113 = arith.constant 0 : index
+            %116 = arith.cmpi eq, %78, %c0_113 : index
+            %117 = arith.select %116, %c0_i64_111, %c8192_i64_112 : i64
+            %118 = pto.alloc_tile addr = %117 : !pto.tile_buf<loc=left, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+            %c0_i64_114 = arith.constant 0 : i64
+            %c8192_i64_115 = arith.constant 8192 : i64
+            %c0_116 = arith.constant 0 : index
+            %119 = arith.cmpi eq, %78, %c0_116 : index
+            %120 = arith.select %119, %c0_i64_114, %c8192_i64_115 : i64
+            %121 = pto.alloc_tile addr = %120 : !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+            %c0_117 = arith.constant 0 : index
+            %122 = arith.cmpi eq, %78, %c0_117 : index
+            scf.if %122 {
+              pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+            } else {
+              pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
+            }
+            %c0_118 = arith.constant 0 : index
+            %123 = arith.cmpi eq, %78, %c0_118 : index
+            scf.if %123 {
+              pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+            } else {
+              pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
+            }
+            pto.tmatmul.acc ins(%115, %118, %121 : !pto.tile_buf<loc=acc, dtype=f32, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.tile_buf<loc=left, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%112 : !pto.tile_buf<loc=acc, dtype=f32, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+            %c0_119 = arith.constant 0 : index
+            %124 = arith.cmpi eq, %78, %c0_119 : index
+            scf.if %124 {
+              pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+            } else {
+              pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+            }
+            %c0_120 = arith.constant 0 : index
+            %125 = arith.cmpi eq, %78, %c0_120 : index
+            scf.if %125 {
+              pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID0>]
+            } else {
+              pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID1>]
+            }
+          }
+          %c64_61 = arith.constant 64 : index
+          %c64_62 = arith.constant 64 : index
+          %c1_63 = arith.constant 1 : index
+          %66 = arith.muli %arg8, %c1_63 : index
+          %67 = pto.make_tensor_view %arg6, shape = [%arg7, %arg8], strides = [%66, %c1_63] : !pto.tensor_view<?x?xf16>
+          %68 = pto.partition_view %67, offsets = [%16, %17], sizes = [%c64_61, %c64_62] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<64x64xf16>
+          %c0_i64_64 = arith.constant 0 : i64
+          %c16384_i64_65 = arith.constant 16384 : i64
+          %c0_66 = arith.constant 0 : index
+          %69 = arith.cmpi eq, %25, %c0_66 : index
+          %70 = arith.select %69, %c0_i64_64, %c16384_i64_65 : i64
+          %71 = pto.alloc_tile addr = %70 : !pto.tile_buf<loc=acc, dtype=f32, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+          %c0_67 = arith.constant 0 : index
+          %72 = arith.cmpi eq, %25, %c0_67 : index
+          scf.if %72 {
+            pto.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+          } else {
+            pto.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID1>]
+          }
+          %c0_68 = arith.constant 0 : index
+          %73 = arith.cmpi eq, %25, %c0_68 : index
+          scf.if %73 {
+            pto.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+          } else {
+            pto.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID1>]
+          }
+          pto.tstore ins(%71 : !pto.tile_buf<loc=acc, dtype=f32, rows=64, cols=64, v_row=64, v_col=64, blayout=col_major, slayout=row_major, fractal=1024, pad=0>) outs(%68 : !pto.partition_tensor_view<64x64xf16>)
+          %c0_69 = arith.constant 0 : index
+          %74 = arith.cmpi eq, %25, %c0_69 : index
+          scf.if %74 {
+            pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+          } else {
+            pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID1>]
+          }
+          %c0_70 = arith.constant 0 : index
+          %75 = arith.cmpi eq, %20, %c0_70 : index
+          scf.if %75 {
+            pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+          } else {
+            pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+          }
+          %c0_71 = arith.constant 0 : index
+          %76 = arith.cmpi eq, %20, %c0_71 : index
+          scf.if %76 {
+            pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID0>]
+          } else {
+            pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID1>]
+          }
+        }
+        pto.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+        pto.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID1>]
+        pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+        pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+        pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID0>]
+        pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID1>]
+      }
+    }
+    return
+  }
+}
