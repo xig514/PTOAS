@@ -4,8 +4,12 @@ import os
 import pathlib
 import subprocess
 from enum import Enum
+import platform
 
-from mlir.ir import InsertionPoint, IndexType, F32Type, IntegerType
+from mlir.ir import (
+    InsertionPoint, IndexType, F32Type, F16Type, IntegerType,
+    MemRefType, ShapedType,
+)
 from mlir.dialects import func
 
 from ._ir_builder import IRBuilder, set_builder, clear_builder
@@ -43,6 +47,7 @@ class KernelFunction:
         self._lib_path = None
         self._output_dir = None
         self._param_specs = None  # saved from tracing
+        self._has_cross_core_sync = False  # set by _inject_ffts_if_needed
 
 
     # -- IR Generation (existing, now cached) --
@@ -75,6 +80,7 @@ class KernelFunction:
         pto_path = out_dir / "kernel.pto"
         cpp_path = out_dir / "kernel.cpp"
         pto_path.write_text(ir, encoding="utf-8")
+
         subprocess.run(
             ["ptoas", str(pto_path),
              f"--pto-level={pto_level}",
@@ -136,7 +142,7 @@ class KernelFunction:
     # -- Print IR (original __call__ behavior) --
     def __call__(self):
         """Trace and print the IR to stdout."""
-        print(self.emit_ir())
+        # print(self.emit_ir())
 
 
     # -- Properties --
@@ -160,7 +166,7 @@ class KernelFunction:
 
         cpp_params = []
         kernel_args = []
-	
+
         for pname, spec in self._param_specs:
             if isinstance(spec, (_TensorSpec, _TensorShapeSpec)):
                 elem_cpp = _DTYPE_TO_CPP[spec.dtype.name]
@@ -182,6 +188,21 @@ class KernelFunction:
 
         sig = ", ".join(["uint32_t blockDim", "void* stream"] + cpp_params)
         call_args = ", ".join(kernel_args)
+
+        if self._has_cross_core_sync:
+            # Append ffts address obtained from runtime as last kernel arg.
+            call_args = f"{call_args}, (int64_t*)ffts" if call_args else "(int64_t*)ffts"
+            return (
+                f'#include "runtime/rt_ffts.h"\n'
+                f'#include "{kernel_cpp_name}"\n'
+                f'extern "C" void call_kernel({sig})\n'
+                "{\n"
+                "    uint64_t ffts = 0;\n"
+                "    uint32_t fftsLen = 0;\n"
+                "    rtGetC2cCtrlAddr(&ffts, &fftsLen);\n"
+                f"    {self._name}<<<blockDim, nullptr, stream>>>({call_args});\n"
+                "}\n"
+            )
 
         return (
             f'#include "{kernel_cpp_name}"\n'
@@ -214,10 +235,17 @@ class KernelFunction:
             out_dir = self._ensure_output_dir()
             tmp_lib_path = out_dir / "kernel.o"
             dav_defines.append("-c")
-
+        machine = platform.machine().lower()
+        if machine in ('aarch64', 'arm64'):
+            arch_folder = 'aarch64-linux'
+        else:
+            arch_folder = 'x86_64-linux'
         cmd = [
             "bisheng",
-            f"-I{toolkit_home}/include",
+            f"-I{toolkit_home}/{arch_folder}/include/",
+            f"-I{toolkit_home}/{arch_folder}/pkg_inc/",
+            f"-I{toolkit_home}/{arch_folder}/pkg_inc/profiling",
+            f"-I{toolkit_home}/{arch_folder}/pkg_inc/runtime",
             "-fPIC",
             "-D_FORTIFY_SOURCE=2",
             "-O2",
@@ -240,7 +268,7 @@ class KernelFunction:
             str(caller_path),
             "-o", str(tmp_lib_path),
         ]
-        print("CMD:", " ".join(cmd) if isinstance(cmd, list) else cmd)
+        # print("CMD:", " ".join(cmd) if isinstance(cmd, list) else cmd)
         subprocess.run(cmd, check=True, cwd=str(self._ensure_output_dir()))
         if npu_arch == "dav-c220":
             # 融合算子还需要链接一下生成的 kernel.o，才能得到包含融合算子的 .so
@@ -255,6 +283,58 @@ class KernelFunction:
             ]
             subprocess.run(cmd, check=True, cwd=str(self._ensure_output_dir()))
 
+
+    def _inject_ffts_if_needed(self, builder, fn_op):
+        """If sync ops exist, add ffts_addr as last func arg + pto.set_ffts.
+
+        Returns True if injection was performed.
+        """
+        from mlir.ir import TypeAttr
+        from mlir.dialects import pto as _pto
+
+        # Walk the function body to detect cross-core sync ops.
+        has_sync = False
+        for op in fn_op.body.blocks[0].operations:
+            has_sync = self._walk_for_sync(op)
+            if has_sync:
+                break
+        if not has_sync:
+            return False
+
+        # Add a memref<?xf16> argument (appended at end — the ffts address).
+        # pto.set_ffts requires a memref with element type i64 or i8.
+        ffts_ty = MemRefType.get(
+            [ShapedType.get_dynamic_size()],
+            IntegerType.get_signless(64),
+        )
+        entry = fn_op.body.blocks[0]
+        ffts_arg = entry.add_argument(ffts_ty, builder.loc)
+
+        # Update function type: append the new arg type.
+        old_ft = fn_op.type
+        new_inputs = list(old_ft.inputs) + [ffts_ty]
+        fn_op.function_type = TypeAttr.get(
+            func.FunctionType.get(new_inputs, list(old_ft.results))
+        )
+
+        # Insert pto.set_ffts at function entry (before first op).
+        with InsertionPoint.at_block_begin(entry):
+            _pto.SetFFTsOp(ffts_arg)
+
+        return True
+
+    @staticmethod
+    def _walk_for_sync(op):
+        """Recursively check if op or its nested regions contain sync ops."""
+        name = op.operation.name
+        if name in ("pto.sync.set", "pto.sync.wait"):
+            return True
+        for region in op.operation.regions:
+            for block in region:
+                for nested in block:
+                    if KernelFunction._walk_for_sync(nested):
+                        return True
+        return False
 
     def _trace(self, builder):
         hints = {
@@ -350,6 +430,9 @@ class KernelFunction:
             # Always unbind DynVars to prevent stale bindings
             for dv in dynvars_to_unbind:
                 dv._unbind()
+
+        # -- auto-inject ffts_addr for A2/A3 cross-core sync --
+        self._has_cross_core_sync = self._inject_ffts_if_needed(builder, fn_op)
 
         return builder.emit_ir()
 
