@@ -6,7 +6,9 @@ Step-by-step verification against C++ reference (fa_performance_kernel.cpp):
 
 Key insight on matmul layout:
   tmatmul(acc, left, right) computes standard C = A @ B.
-  To get Q @ K^T, we pass K^T[D, Skv] as input (host transposes K).
+  To get Q @ K^T, we pass K^T[D, Skv] as input (host transposes K),
+  or use tload with layout="DN" to load K[Skv, D] via a DN tensor view into
+  a ZN MAT tile so the hardware performs the transpose during DMA.
   For P @ V, standard matmul P[Sq, Skv] @ V[Skv, D] works directly.
 
 Algorithm (FA2.0 streaming):
@@ -605,8 +607,12 @@ def _make_fa_double_buffer_kernel():
     - No manual sync — ``auto_sync=True`` inserts all ``set_flag`` /
       ``wait_flag`` and uses ``EventIdGroup`` internally.
 
+    K is passed as K[Skv, D] (not pre-transposed).  The kernel uses
+    ``tload(..., layout="DN")`` with a DN tensor view and ZN MAT tiles so the
+    hardware performs the transpose during the DN → ZN DMA conversion.
+
     Double-buffered resources:
-      Cube:  k_mat, k_right, p_mat, p_left, v_mat, v_right, qk_acc, pv_acc
+      Cube:  k_mat(ZN), k_right, p_mat, p_left, v_mat, v_right, qk_acc, pv_acc
       Vector: qk_vec, p_f16  (DMA overlap with PIPE_V compute)
 
     Single-buffered (Q loaded once, running state):
@@ -620,7 +626,7 @@ def _make_fa_double_buffer_kernel():
     @pto.kernel
     def fa_double_buffer_kernel(
         q: pto.Tensor[[Sq, D], pto.float16],
-        kt: pto.Tensor[[D, Skv], pto.float16],
+        k: pto.Tensor[[Skv, D], pto.float16],       # K (not transposed)
         v: pto.Tensor[[Skv, D], pto.float16],
         o: pto.Tensor[[Sq, D], pto.float16],
         qk_buf: pto.Tensor[[Sq, Skv], pto.float32],
@@ -632,56 +638,48 @@ def _make_fa_double_buffer_kernel():
 
         # =================== CUBE SECTION ===================
         with pto.section_cube():
+            # Tile type descriptors
+            mat_f16 = pto.TileType((TILE, TILE), pto.float16, pto.MAT)
+            mat_f16_zn = pto.TileType((TILE, TILE), pto.float16, pto.MAT,
+                                      blayout=pto.BLayout.RowMajor,
+                                      slayout=pto.SLayout.ColMajor)
+            left_f16 = pto.TileType((TILE, TILE), pto.float16, pto.LEFT)
+            right_f16 = pto.TileType((TILE, TILE), pto.float16, pto.RIGHT)
+            acc_f32 = pto.TileType((TILE, TILE), pto.float32, pto.ACC)
+
             # ---- MAT (L1) buffers ----
-            q_mat = pto.make_tile((TILE, TILE), pto.float16, pto.MAT, addr=0)
-            # Double-buffered K MAT
-            k_mat0 = pto.make_tile((TILE, TILE), pto.float16, pto.MAT,
-                                   addr=TILE * TILE * 2)
-            k_mat1 = pto.make_tile((TILE, TILE), pto.float16, pto.MAT,
-                                   addr=TILE * TILE * 4)
+            q_mat = pto.make_tile(mat_f16, addr=0)
+            # K uses ZN layout for DN→ZN transposed load
+            k_mat0 = pto.make_tile(mat_f16_zn, addr=TILE * TILE * 2)
+            k_mat1 = pto.make_tile(mat_f16_zn, addr=TILE * TILE * 4)
             k_mat_group = pto.TileGroup([k_mat0, k_mat1])
-            # Double-buffered P MAT
-            p_mat0 = pto.make_tile((TILE, TILE), pto.float16, pto.MAT,
-                                   addr=TILE * TILE * 6)
-            p_mat1 = pto.make_tile((TILE, TILE), pto.float16, pto.MAT,
-                                   addr=TILE * TILE * 8)
+            p_mat0 = pto.make_tile(mat_f16, addr=TILE * TILE * 6)
+            p_mat1 = pto.make_tile(mat_f16, addr=TILE * TILE * 8)
             p_mat_group = pto.TileGroup([p_mat0, p_mat1])
-            # Double-buffered V MAT
-            v_mat0 = pto.make_tile((TILE, TILE), pto.float16, pto.MAT,
-                                   addr=TILE * TILE * 10)
-            v_mat1 = pto.make_tile((TILE, TILE), pto.float16, pto.MAT,
-                                   addr=TILE * TILE * 12)
+            v_mat0 = pto.make_tile(mat_f16, addr=TILE * TILE * 10)
+            v_mat1 = pto.make_tile(mat_f16, addr=TILE * TILE * 12)
             v_mat_group = pto.TileGroup([v_mat0, v_mat1])
 
             # ---- LEFT (L0A) buffers ----
-            q_left = pto.make_tile((TILE, TILE), pto.float16, pto.LEFT, addr=0)
-            p_left0 = pto.make_tile((TILE, TILE), pto.float16, pto.LEFT,
-                                    addr=TILE * TILE * 2)
-            p_left1 = pto.make_tile((TILE, TILE), pto.float16, pto.LEFT,
-                                    addr=TILE * TILE * 4)
+            q_left = pto.make_tile(left_f16, addr=0)
+            p_left0 = pto.make_tile(left_f16, addr=TILE * TILE * 2)
+            p_left1 = pto.make_tile(left_f16, addr=TILE * TILE * 4)
             p_left_group = pto.TileGroup([p_left0, p_left1])
 
             # ---- RIGHT (L0B) buffers ----
-            k_right0 = pto.make_tile((TILE, TILE), pto.float16, pto.RIGHT,
-                                     addr=0)
-            k_right1 = pto.make_tile((TILE, TILE), pto.float16, pto.RIGHT,
-                                     addr=TILE * TILE * 2)
+            k_right0 = pto.make_tile(right_f16, addr=0)
+            k_right1 = pto.make_tile(right_f16, addr=TILE * TILE * 2)
             k_right_group = pto.TileGroup([k_right0, k_right1])
-            v_right0 = pto.make_tile((TILE, TILE), pto.float16, pto.RIGHT,
-                                     addr=TILE * TILE * 4)
-            v_right1 = pto.make_tile((TILE, TILE), pto.float16, pto.RIGHT,
-                                     addr=TILE * TILE * 6)
+            v_right0 = pto.make_tile(right_f16, addr=TILE * TILE * 4)
+            v_right1 = pto.make_tile(right_f16, addr=TILE * TILE * 6)
             v_right_group = pto.TileGroup([v_right0, v_right1])
 
             # ---- ACC (L0C) buffers ----
-            qk_acc0 = pto.make_tile((TILE, TILE), pto.float32, pto.ACC, addr=0)
-            qk_acc1 = pto.make_tile((TILE, TILE), pto.float32, pto.ACC,
-                                    addr=TILE * TILE * 4)
+            qk_acc0 = pto.make_tile(acc_f32, addr=0)
+            qk_acc1 = pto.make_tile(acc_f32, addr=TILE * TILE * 4)
             qk_acc_group = pto.TileGroup([qk_acc0, qk_acc1])
-            pv_acc0 = pto.make_tile((TILE, TILE), pto.float32, pto.ACC,
-                                    addr=TILE * TILE * 8)
-            pv_acc1 = pto.make_tile((TILE, TILE), pto.float32, pto.ACC,
-                                    addr=TILE * TILE * 12)
+            pv_acc0 = pto.make_tile(acc_f32, addr=TILE * TILE * 8)
+            pv_acc1 = pto.make_tile(acc_f32, addr=TILE * TILE * 12)
             pv_acc_group = pto.TileGroup([pv_acc0, pv_acc1])
 
             core_id = pto.get_block_idx()
@@ -696,8 +694,9 @@ def _make_fa_double_buffer_kernel():
                 buf = j % 2
                 skv_off = j * TILE
 
-                # QK: S_j = Q @ Kt_j
-                pto.tload(k_mat_group[buf], kt, offsets=[0, skv_off])
+                # QK: S_j = Q @ K_j^T  (transposed load: K[Skv,D] → K^T[D,Skv])
+                pto.tload(k_mat_group[buf], k,
+                                     offsets=[skv_off, 0], layout="DN")
                 pto.tmov(k_right_group[buf], k_mat_group[buf])
                 pto.tmatmul(qk_acc_group[buf], q_left, k_right_group[buf])
                 pto.tstore(qk_buf, qk_acc_group[buf],
@@ -721,33 +720,28 @@ def _make_fa_double_buffer_kernel():
         # =================== VECTOR SECTION ===================
         HALF = TILE // 2
         with pto.section_vector():
+            # Tile type descriptors
+            vec_f32 = pto.TileType((HALF, TILE), pto.float32, pto.VEC)
+            vec_f16 = pto.TileType((HALF, TILE), pto.float16, pto.VEC)
+            vec_reduce = pto.TileType((HALF, TILE), pto.float32, pto.VEC,
+                                      valid_shape=(HALF, 1))
+
             # Double-buffered VEC tiles for DMA/compute overlap
-            qk_vec0 = pto.make_tile((HALF, TILE), pto.float32, pto.VEC,
-                                    addr=0)
-            qk_vec1 = pto.make_tile((HALF, TILE), pto.float32, pto.VEC,
-                                    addr=HALF * TILE * 4)
+            qk_vec0 = pto.make_tile(vec_f32, addr=0)
+            qk_vec1 = pto.make_tile(vec_f32, addr=HALF * TILE * 4)
             qk_vec_group = pto.TileGroup([qk_vec0, qk_vec1])
 
-            tmp_vec = pto.make_tile((HALF, TILE), pto.float32, pto.VEC,
-                                    addr=HALF * TILE * 8)
+            tmp_vec = pto.make_tile(vec_f32, addr=HALF * TILE * 8)
 
-            p_f16_0 = pto.make_tile((HALF, TILE), pto.float16, pto.VEC,
-                                    addr=HALF * TILE * 12)
-            p_f16_1 = pto.make_tile((HALF, TILE), pto.float16, pto.VEC,
-                                    addr=HALF * TILE * 14)
+            p_f16_0 = pto.make_tile(vec_f16, addr=HALF * TILE * 12)
+            p_f16_1 = pto.make_tile(vec_f16, addr=HALF * TILE * 14)
             p_f16_group = pto.TileGroup([p_f16_0, p_f16_1])
 
-            reduce_dst = pto.make_tile((HALF, TILE), pto.float32, pto.VEC,
-                                        addr=HALF * TILE * 16,
-                                        valid_shape=(HALF, 1))
-            global_max = pto.make_tile((HALF, TILE), pto.float32, pto.VEC,
-                                        addr=HALF * TILE * 20)
-            global_sum = pto.make_tile((HALF, TILE), pto.float32, pto.VEC,
-                                        addr=HALF * TILE * 24)
-            running_o = pto.make_tile((HALF, TILE), pto.float32, pto.VEC,
-                                       addr=HALF * TILE * 28)
-            exp_corr = pto.make_tile((HALF, TILE), pto.float32, pto.VEC,
-                                      addr=HALF * TILE * 32)
+            reduce_dst = pto.make_tile(vec_reduce, addr=HALF * TILE * 16)
+            global_max = pto.make_tile(vec_f32, addr=HALF * TILE * 20)
+            global_sum = pto.make_tile(vec_f32, addr=HALF * TILE * 24)
+            running_o = pto.make_tile(vec_f32, addr=HALF * TILE * 28)
+            exp_corr = pto.make_tile(vec_f32, addr=HALF * TILE * 32)
 
             core_id = pto.get_block_idx()
             sq_off = core_id * TILE
@@ -1054,7 +1048,6 @@ def test_npu_double_buffer_fa():
             torch.manual_seed(42)
             q = torch.rand((sq, d), device=device, dtype=torch.float16)
             k = torch.rand((skv, d), device=device, dtype=torch.float16)
-            kt = k.T.contiguous()
             v = torch.rand((skv, d), device=device, dtype=torch.float16)
             o = torch.empty((sq, d), device=device, dtype=torch.float16)
 
@@ -1064,7 +1057,7 @@ def test_npu_double_buffer_fa():
                                  dtype=torch.float16)
             pv_buf = torch.empty((sq, d), device=device, dtype=torch.float32)
 
-            pto.launch(compiled, q, kt, v, o, qk_buf, p_buf, pv_buf,
+            pto.launch(compiled, q, k, v, o, qk_buf, p_buf, pv_buf,
                        block_dim=1)
             torch.npu.synchronize()
 

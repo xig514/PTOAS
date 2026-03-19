@@ -50,6 +50,58 @@ def _tmov_pipe(dst, src):
 
 
 # ---------------------------------------------------------------------------
+#  TileType — reusable tile buffer descriptor
+# ---------------------------------------------------------------------------
+
+class TileType:
+    """Descriptor that bundles tile buffer configuration.
+
+    Groups ``(shape, dtype, loc)`` with optional layout overrides so that
+    multiple tiles sharing the same configuration can be created concisely::
+
+        mat_f16 = TileType((64, 64), float16, MAT)
+        a = make_tile(mat_f16, addr=0)
+        b = make_tile(mat_f16, addr=8192)
+
+    Parameters
+    ----------
+    shape : tuple[int, ...]
+        Physical shape of the tile (e.g. ``(32, 32)``).
+    dtype : DType
+        Element type.
+    loc : AddressSpace enum
+        Memory location (``VEC``, ``MAT``, ``LEFT``, ``RIGHT``, ``ACC``, …).
+    valid_shape / blayout / slayout / fractal / pad
+        Optional layout overrides (same semantics as ``make_tile``).
+    """
+
+    __slots__ = ("shape", "dtype", "loc", "valid_shape",
+                 "blayout", "slayout", "fractal", "pad")
+
+    def __init__(self, shape, dtype, loc, *,
+                 valid_shape=None, blayout=None, slayout=None,
+                 fractal=None, pad=None):
+        self.shape = tuple(shape)
+        self.dtype = dtype
+        self.loc = loc
+        self.valid_shape = tuple(valid_shape) if valid_shape is not None else None
+        self.blayout = blayout
+        self.slayout = slayout
+        self.fractal = fractal
+        self.pad = pad
+
+    def __repr__(self):
+        parts = [repr(self.shape), repr(self.dtype), f"{self.loc}"]
+        if self.valid_shape is not None:
+            parts.append(f"valid_shape={self.valid_shape}")
+        if self.blayout is not None:
+            parts.append(f"blayout={self.blayout}")
+        if self.slayout is not None:
+            parts.append(f"slayout={self.slayout}")
+        return f"TileType({', '.join(parts)})"
+
+
+# ---------------------------------------------------------------------------
 #  Tile configuration defaults by address space
 # ---------------------------------------------------------------------------
 
@@ -69,19 +121,24 @@ _TILE_DEFAULTS = {
 #  make_tile
 # ---------------------------------------------------------------------------
 
-def make_tile(shape, dtype, loc, addr=0, *,
+def make_tile(shape_or_type, dtype=None, loc=None, addr=0, *,
               valid_shape=None, blayout=None, slayout=None,
               fractal=None, pad=None):
     """Allocate a tile buffer.
 
+    Can be called in two forms::
+
+        make_tile((64, 64), pto.float16, pto.MAT, addr=0)
+        make_tile(tile_type, addr=0)
+
     Parameters
     ----------
-    shape : tuple[int, ...]
-        Physical shape of the tile (e.g. ``(32, 32)``).
-    dtype : DType
-        Element type.
-    loc : AddressSpace enum
-        Memory location (``VEC``, ``MAT``, ``LEFT``, ``RIGHT``, ``ACC``, …).
+    shape_or_type : tuple[int, ...] or TileType
+        Physical shape, or a ``TileType`` that bundles shape/dtype/loc/layout.
+    dtype : DType, optional
+        Element type (required when *shape_or_type* is a tuple).
+    loc : AddressSpace enum, optional
+        Memory location (required when *shape_or_type* is a tuple).
     addr : int or ScalarValue
         Byte address inside the memory space (default 0).
     valid_shape : tuple[int, ...] or None
@@ -90,6 +147,24 @@ def make_tile(shape, dtype, loc, addr=0, *,
         Override the default tile-buffer configuration.
     """
     from ._ir_builder import get_builder
+
+    if isinstance(shape_or_type, TileType):
+        tt = shape_or_type
+        shape = tt.shape
+        dtype = dtype if dtype is not None else tt.dtype
+        loc = loc if loc is not None else tt.loc
+        valid_shape = valid_shape if valid_shape is not None else tt.valid_shape
+        blayout = blayout if blayout is not None else tt.blayout
+        slayout = slayout if slayout is not None else tt.slayout
+        fractal = fractal if fractal is not None else tt.fractal
+        pad = pad if pad is not None else tt.pad
+    else:
+        shape = shape_or_type
+        if dtype is None or loc is None:
+            raise TypeError(
+                "make_tile() requires dtype and loc when first argument "
+                "is not a TileType"
+            )
 
     defaults = _TILE_DEFAULTS.get(
         loc, (_pto.BLayout.RowMajor, _pto.SLayout.NoneBox, 512)
@@ -141,7 +216,7 @@ def make_tile(shape, dtype, loc, addr=0, *,
 #  DMA ops  (dst, src)
 # ---------------------------------------------------------------------------
 
-def tload(tile, src, offsets=None):
+def tload(tile, src, offsets=None, layout=None):
     """Load from a partition view (or tensor with offsets) into a tile buffer.
 
     Parameters
@@ -154,8 +229,73 @@ def tload(tile, src, offsets=None):
     offsets : list[int|ScalarValue], optional
         When *src* is a ``_TensorProxy``, element offsets for each dimension.
         Sizes are inferred from ``tile.shape``.
+    layout : str or Layout enum, optional
+        Memory layout of the source tensor view.  ``"DN"`` (or
+        ``Layout.DN``) creates a column-major (transposed) view of a 2-D
+        source — the offsets are given in the **original** coordinate
+        system and swapped internally.  ``"ND"`` / ``None`` keeps the
+        default row-major behaviour.  ``"NZ"`` is accepted for
+        forward-compatibility but currently behaves like ``"ND"``.
     """
     from ._tensor import _TensorProxy
+
+    # Normalise layout to a string (or None).
+    if layout is not None:
+        layout_str = layout if isinstance(layout, str) else layout.name
+        layout_str = layout_str.upper()
+    else:
+        layout_str = None
+
+    # DN path: build a transposed tensor view, then partition + load.
+    if layout_str == "DN":
+        from ._utils import ensure_index_ssa
+        from ._ir_builder import get_builder
+
+        assert isinstance(src, _TensorProxy) and src.ndim == 2, \
+            "tload with layout='DN' requires a 2D tensor source"
+
+        builder = get_builder()
+
+        # Source tensor shape [dim0, dim1], row-major strides [dim1, 1].
+        dim0_ssa = src._shape_ssas[0]
+        dim1_ssa = src._shape_ssas[1]
+
+        # Transposed view: shape [dim1, dim0], col-major strides [1, dim1].
+        tv_type = _pto.TensorViewType.get(2, src.dtype.to_mlir())
+        tv_op = _pto.MakeTensorViewOp(
+            tv_type, src.ptr_ssa, [dim1_ssa, dim0_ssa],
+            [builder.constant_index(1), dim1_ssa]
+        )
+        # Mark as DN so InferPTOLayout respects it (dynamic strides
+        # prevent automatic inference) and EmitC emits Layout::DN.
+        tv_op.operation.attributes["layout"] = _pto.LayoutAttr.get(
+            _pto.Layout.DN)
+        tv = tv_op.result
+
+        # Convert offsets from source coords [row, col] → transposed [col, row].
+        if offsets is not None:
+            off_ssas = [ensure_index_ssa(offsets[1]),
+                        ensure_index_ssa(offsets[0])]
+        else:
+            off_ssas = [builder.constant_index(0),
+                        builder.constant_index(0)]
+
+        sz_ssas = [builder.constant_index(s) for s in tile.shape]
+        static_sizes = list(tile.shape)
+
+        pv_type = _pto.PartitionTensorViewType.get(static_sizes,
+                                                    src.dtype.to_mlir())
+        pv = _pto.PartitionViewOp(
+            pv_type, tv, offsets=off_ssas, sizes=sz_ssas
+        ).result
+
+        tracker = _get_tracker()
+        if tracker:
+            tracker.record_op(PIPE.PIPE_MTE2, reads=[], writes=[tile])
+        _pto.TLoadOp(None, pv, tile.ssa)
+        return
+
+    # Default (ND / NZ / None) path.
     if offsets is not None and isinstance(src, _TensorProxy):
         pv = src.partition(offsets=offsets, sizes=list(tile.shape))
         src = pv
