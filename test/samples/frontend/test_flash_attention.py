@@ -29,6 +29,10 @@ Usage:
     python3 test_flash_attention.py --ktranspose       # K auto-transpose experiment
     python3 test_flash_attention.py --multicore        # Multi-core FA (Sq=8192)
     python3 test_flash_attention.py --double-buffer    # Double-buffered FA
+    python3 test_flash_attention.py --multi-buffer     # MultiBuffer-based FA
+    python3 test_flash_attention.py --multicore-multi-buffer  # Multi-core + MultiBuffer FA (Sq=8192)
+    python3 test_flash_attention.py --perf             # Benchmark multicore-MB FA (timing + TFLOPS)
+    python3 test_flash_attention.py --perf   # + CANN profiler trace to /data/g00895580/tmp/fa_prof/
 """
 
 import sys
@@ -814,6 +818,220 @@ def _make_fa_double_buffer_kernel():
 
     return fa_double_buffer_kernel
 
+def _make_multicore_fa_multi_buffer_kernel():
+    """Create multi-core double-buffered FA kernel using MultiBuffer.
+
+    Combines the multi-core strided loop pattern from
+    ``_make_multicore_fa_kernel`` with MultiBuffer double buffering.
+
+    Distributes Sq tiles across Cube cores with strided outer loop:
+        for i in range(core_id, sq_tiles, num_cores)
+    """
+    Sq = pto.DynVar("Sq")
+    Skv = pto.DynVar("Skv")
+    D = pto.DynVar("D")
+    ScratchSq = pto.DynVar("ScratchSq")  # = num_cores * TILE
+
+    @pto.kernel
+    def multicore_fa_mb_kernel(
+        q: pto.Tensor[[Sq, D], pto.float16],
+        k: pto.Tensor[[Skv, D], pto.float16],       # K (not transposed)
+        v: pto.Tensor[[Skv, D], pto.float16],
+        o: pto.Tensor[[Sq, D], pto.float16],
+        qk_buf: pto.Tensor[[ScratchSq, Skv], pto.float32],
+        p_buf: pto.Tensor[[ScratchSq, Skv], pto.float16],
+        pv_buf: pto.Tensor[[ScratchSq, D], pto.float32],
+    ):
+        scale = 1.0 / math.sqrt(TILE)
+        sq_tiles = (Sq + (TILE - 1)) // TILE
+        skv_tiles = (Skv + (TILE - 1)) // TILE
+        num_cores = pto.get_block_num()
+
+        # =================== CUBE SECTION ===================
+        with pto.section_cube():
+            mat_f16 = pto.TileType((TILE, TILE), pto.float16, pto.MAT)
+            mat_f16_zn = pto.TileType((TILE, TILE), pto.float16, pto.MAT,
+                                      blayout=pto.BLayout.RowMajor,
+                                      slayout=pto.SLayout.ColMajor)
+            left_f16 = pto.TileType((TILE, TILE), pto.float16, pto.LEFT)
+            right_f16 = pto.TileType((TILE, TILE), pto.float16, pto.RIGHT)
+            acc_f32 = pto.TileType((TILE, TILE), pto.float32, pto.ACC)
+
+            # Single-buffered
+            q_mat = pto.make_tile(mat_f16, addr=0)
+            q_left = pto.make_tile(left_f16, addr=0)
+
+            # Double-buffered via MultiBuffer
+            k_mat_mb = pto.MultiBuffer(
+                pto.make_tile(mat_f16_zn, addr=TILE * TILE * 2),
+                pto.make_tile(mat_f16_zn, addr=TILE * TILE * 4))
+            p_mat_mb = pto.MultiBuffer(
+                pto.make_tile(mat_f16, addr=TILE * TILE * 6),
+                pto.make_tile(mat_f16, addr=TILE * TILE * 8))
+            v_mat_mb = pto.MultiBuffer(
+                pto.make_tile(mat_f16, addr=TILE * TILE * 10),
+                pto.make_tile(mat_f16, addr=TILE * TILE * 12))
+            p_left_mb = pto.MultiBuffer(
+                pto.make_tile(left_f16, addr=TILE * TILE * 2),
+                pto.make_tile(left_f16, addr=TILE * TILE * 4))
+            k_right_mb = pto.MultiBuffer(
+                pto.make_tile(right_f16, addr=0),
+                pto.make_tile(right_f16, addr=TILE * TILE * 2))
+            v_right_mb = pto.MultiBuffer(
+                pto.make_tile(right_f16, addr=TILE * TILE * 4),
+                pto.make_tile(right_f16, addr=TILE * TILE * 6))
+            qk_acc_mb = pto.MultiBuffer(
+                pto.make_tile(acc_f32, addr=0),
+                pto.make_tile(acc_f32, addr=TILE * TILE * 4))
+            pv_acc_mb = pto.MultiBuffer(
+                pto.make_tile(acc_f32, addr=TILE * TILE * 8),
+                pto.make_tile(acc_f32, addr=TILE * TILE * 12))
+
+            core_id = pto.get_block_idx()
+            scratch_row = core_id * TILE
+
+            for i in pto.range(core_id, sq_tiles, num_cores):
+                sq_off = i * TILE
+
+                # Reload Q for this Sq tile
+                pto.tload(q_mat, q, offsets=[sq_off, 0])
+                pto.tmov(q_left, q_mat)
+
+                # ---- KV loop with double buffering ----
+                for j in pto.range(skv_tiles):
+                    skv_off = j * TILE
+
+                    k_mat = k_mat_mb.get()
+                    k_right = k_right_mb.get()
+                    qk_acc = qk_acc_mb.get()
+                    p_mat = p_mat_mb.get()
+                    p_left = p_left_mb.get()
+                    v_mat = v_mat_mb.get()
+                    v_right = v_right_mb.get()
+                    pv_acc = pv_acc_mb.get()
+
+                    # QK: S_j = Q @ K_j^T
+                    pto.tload(k_mat, k, offsets=[skv_off, 0], layout="DN")
+                    pto.tmov(k_right, k_mat)
+                    pto.tmatmul(qk_acc, q_left, k_right)
+                    pto.tstore(qk_buf, qk_acc,
+                               offsets=[scratch_row, skv_off])
+                    pto.sync_set(pto.PIPE_FIX, QK_READY)
+
+                    pto.sync_wait(pto.PIPE_M, P_READY)
+
+                    # PV: PV_j = P_j @ V_j
+                    pto.tload(p_mat, p_buf,
+                              offsets=[scratch_row, skv_off])
+                    pto.tmov(p_left, p_mat)
+                    pto.tload(v_mat, v, offsets=[skv_off, 0])
+                    pto.tmov(v_right, v_mat)
+                    pto.tmatmul(pv_acc, p_left, v_right)
+                    pto.tstore(pv_buf, pv_acc, offsets=[scratch_row, 0])
+                    pto.sync_set(pto.PIPE_FIX, PV_READY)
+
+        # =================== VECTOR SECTION ===================
+        HALF = TILE // 2
+        with pto.section_vector():
+            qk_vec_mb = pto.MultiBuffer(
+                pto.make_tile((HALF, TILE), pto.float32, pto.VEC, addr=0),
+                pto.make_tile((HALF, TILE), pto.float32, pto.VEC,
+                              addr=HALF * TILE * 4))
+            p_f16_mb = pto.MultiBuffer(
+                pto.make_tile((HALF, TILE), pto.float16, pto.VEC,
+                              addr=HALF * TILE * 12),
+                pto.make_tile((HALF, TILE), pto.float16, pto.VEC,
+                              addr=HALF * TILE * 14))
+
+            tmp_vec = pto.make_tile((HALF, TILE), pto.float32, pto.VEC,
+                                    addr=HALF * TILE * 8)
+            reduce_dst = pto.make_tile((HALF, TILE), pto.float32, pto.VEC,
+                                        addr=HALF * TILE * 16,
+                                        valid_shape=(HALF, 1))
+            global_max = pto.make_tile((HALF, TILE), pto.float32, pto.VEC,
+                                        addr=HALF * TILE * 20)
+            global_sum = pto.make_tile((HALF, TILE), pto.float32, pto.VEC,
+                                        addr=HALF * TILE * 24)
+            running_o = pto.make_tile((HALF, TILE), pto.float32, pto.VEC,
+                                       addr=HALF * TILE * 28)
+            exp_corr = pto.make_tile((HALF, TILE), pto.float32, pto.VEC,
+                                      addr=HALF * TILE * 32)
+
+            core_id = pto.get_block_idx()
+            scratch_row = core_id * TILE
+            sub_id = pto.get_subblock_idx()
+            row_off = sub_id * HALF
+
+            for i in pto.range(core_id, sq_tiles, num_cores):
+                sq_off = i * TILE
+
+                # ---- First KV tile: FlashSoftmax INIT + GU INIT ----
+                pto.sync_wait(pto.PIPE_V, QK_READY)
+                pto.tload(qk_vec_mb[0], qk_buf,
+                          offsets=[scratch_row + row_off, 0])
+
+                pto.trowmax(reduce_dst, qk_vec_mb[0], tmp_vec)
+                pto.trowexpand(global_max, reduce_dst)
+                pto.tsub(tmp_vec, qk_vec_mb[0], global_max)
+                pto.tmuls(tmp_vec, tmp_vec, scale)
+                pto.texp(qk_vec_mb[0], tmp_vec)
+                pto.trowsum(reduce_dst, qk_vec_mb[0], tmp_vec)
+                pto.trowexpand(global_sum, reduce_dst)
+                pto.tcvt(p_f16_mb[0], qk_vec_mb[0])
+
+                pto.tstore(p_buf, p_f16_mb[0],
+                           offsets=[scratch_row + row_off, 0])
+                pto.sync_set(pto.PIPE_MTE3, P_READY)
+
+                pto.sync_wait(pto.PIPE_V, PV_READY)
+                pto.tload(running_o, pv_buf,
+                          offsets=[scratch_row + row_off, 0])
+
+                # ---- Remaining KV tiles: FlashSoftmax UPDATE + GU ----
+                for j in pto.range(1, skv_tiles):
+                    skv_off = j * TILE
+
+                    qk_vec = qk_vec_mb.get()
+                    p_f16 = p_f16_mb.get()
+
+                    pto.sync_wait(pto.PIPE_V, QK_READY)
+                    pto.tload(qk_vec, qk_buf,
+                              offsets=[scratch_row + row_off, skv_off])
+
+                    pto.trowmax(reduce_dst, qk_vec, tmp_vec)
+                    pto.trowexpand(tmp_vec, reduce_dst)
+                    pto.tmax(tmp_vec, tmp_vec, global_max)
+                    pto.tsub(exp_corr, global_max, tmp_vec)
+                    pto.tmuls(exp_corr, exp_corr, scale)
+                    pto.texp(exp_corr, exp_corr)
+                    pto.tmul(global_sum, global_sum, exp_corr)
+                    pto.tmul(running_o, running_o, exp_corr)
+                    pto.tmuls(global_max, tmp_vec, 1.0)
+                    pto.tsub(tmp_vec, qk_vec, global_max)
+                    pto.tmuls(tmp_vec, tmp_vec, scale)
+                    pto.texp(qk_vec, tmp_vec)
+                    pto.trowsum(reduce_dst, qk_vec, tmp_vec)
+                    pto.trowexpand(tmp_vec, reduce_dst)
+                    pto.tadd(global_sum, global_sum, tmp_vec)
+                    pto.tcvt(p_f16, qk_vec)
+                    pto.tstore(p_buf, p_f16,
+                               offsets=[scratch_row + row_off, skv_off])
+                    pto.sync_set(pto.PIPE_MTE3, P_READY)
+
+                    # GlobalUpdate: O = O * exp_correction + PV_j
+                    pto.sync_wait(pto.PIPE_V, PV_READY)
+                    pto.tload(qk_vec, pv_buf,
+                              offsets=[scratch_row + row_off, 0])
+                    pto.tadd(running_o, running_o, qk_vec)
+
+                # ---- Final: O = running_o / global_sum ----
+                pto.tdiv(running_o, running_o, global_sum)
+                pto.tcvt(p_f16_mb[0], running_o)
+                pto.tstore(o, p_f16_mb[0],
+                           offsets=[sq_off + row_off, 0])
+
+    return multicore_fa_mb_kernel
+
 
 # ===================================================================
 #  Test harness
@@ -858,6 +1076,15 @@ def test_ir_double_buffer():
     assert "pto.section.vector" in ir
     assert "pto.sync.set" in ir
     print("// Double-buffer FA IR: OK.", file=sys.stderr)
+
+
+def test_ir_multicore_multi_buffer():
+    ir = _make_multicore_fa_multi_buffer_kernel().emit_ir()
+    print(ir)
+    assert "pto.section.cube" in ir
+    assert "pto.section.vector" in ir
+    assert "pto.sync.set" in ir
+    print("// Multi-core multi-buffer FA IR: OK.", file=sys.stderr)
 
 
 def test_npu_qk():
@@ -1078,6 +1305,158 @@ def test_npu_double_buffer_fa():
     run()
     print("// Double-buffer FA PASS: verified.", file=sys.stderr)
 
+def test_npu_multicore_multi_buffer_fa():
+    """Test multi-core double-buffered FlashAttention with MultiBuffer.
+
+    Combines multi-core strided loop (24 cores) with MultiBuffer auto-cycling.
+    Sq=8192, Skv=2048, D=64.
+    """
+    import torch
+    import torch_npu
+
+    kernel = _make_multicore_fa_multi_buffer_kernel()
+
+    @pto.jit
+    def run():
+        compiled = pto.compile(kernel, arch="a3", auto_sync=True)
+        print(f"  compiled: {compiled.lib_path}", file=sys.stderr)
+
+        device = "npu:6"
+        torch.npu.set_device(device)
+
+        block_dim = 24
+        for (sq, skv, d) in [(8192, 2048, 64)]:
+            torch.manual_seed(42)
+            q = torch.rand((sq, d), device=device, dtype=torch.float16)
+            k = torch.rand((skv, d), device=device, dtype=torch.float16)
+            v = torch.rand((skv, d), device=device, dtype=torch.float16)
+            o = torch.empty((sq, d), device=device, dtype=torch.float16)
+
+            scratch_sq = block_dim * TILE
+            qk_buf = torch.empty((scratch_sq, skv), device=device,
+                                  dtype=torch.float32)
+            p_buf = torch.empty((scratch_sq, skv), device=device,
+                                 dtype=torch.float16)
+            pv_buf = torch.empty((scratch_sq, d), device=device,
+                                  dtype=torch.float32)
+
+            pto.launch(compiled, q, k, v, o, qk_buf, p_buf, pv_buf,
+                       block_dim=block_dim)
+            torch.npu.synchronize()
+
+            # Reference: standard attention
+            scale_val = 1.0 / math.sqrt(d)
+            qk_ref = torch.matmul(q.float(), k.float().T) * scale_val
+            attn_ref = torch.softmax(qk_ref, dim=-1)
+            o_ref = torch.matmul(attn_ref, v.float()).half()
+
+            diff = (o - o_ref).abs().max().item()
+            print(f"  MC-MB-FA ({sq},{skv},{d}): max|diff|={diff:.4f}",
+                  file=sys.stderr)
+            print(f"    o[0,:8]:     {o[0,:8].tolist()}", file=sys.stderr)
+            print(f"    o_ref[0,:8]: {o_ref[0,:8].tolist()}", file=sys.stderr)
+
+            torch.testing.assert_close(o, o_ref, rtol=1e-2, atol=1e-2)
+            print(f"  MC-MB-FA ({sq},{skv},{d}): PASS", file=sys.stderr)
+
+    run()
+    print("// Multi-core multi-buffer FA PASS: verified.", file=sys.stderr)
+
+
+def test_perf_multicore_multi_buffer_fa(warmup=10):
+    """Benchmark multi-core double-buffered FlashAttention with MultiBuffer.
+
+    Args:
+        warmup: Number of warmup iterations (default 10).
+        Always capture CANN profiler trace to /data/g00895580/tmp/fa_prof/.
+    """
+    import torch
+    import torch_npu
+
+    kernel = _make_multicore_fa_multi_buffer_kernel()
+
+    @pto.jit
+    def run():
+        compiled = pto.compile(kernel, arch="a3", auto_sync=True)
+        print(f"  compiled: {compiled.lib_path}", file=sys.stderr)
+
+        device = "npu:6"
+        torch.npu.set_device(device)
+
+        block_dim = 24
+        sizes = [(8192, 2048, 64), (4096, 4096, 64), (2048, 8192, 64)]
+
+        for (sq, skv, d) in sizes:
+            torch.manual_seed(42)
+            q = torch.rand((sq, d), device=device, dtype=torch.float16)
+            k = torch.rand((skv, d), device=device, dtype=torch.float16)
+            v = torch.rand((skv, d), device=device, dtype=torch.float16)
+            o = torch.empty((sq, d), device=device, dtype=torch.float16)
+
+            scratch_sq = block_dim * TILE
+            qk_buf = torch.empty((scratch_sq, skv), device=device,
+                                  dtype=torch.float32)
+            p_buf = torch.empty((scratch_sq, skv), device=device,
+                                 dtype=torch.float16)
+            pv_buf = torch.empty((scratch_sq, d), device=device,
+                                  dtype=torch.float32)
+
+            def _launch():
+                pto.launch(compiled, q, k, v, o, qk_buf, p_buf, pv_buf,
+                           block_dim=block_dim)
+
+            # Correctness check
+            _launch()
+            torch.npu.synchronize()
+            scale_val = 1.0 / math.sqrt(d)
+            qk_ref = torch.matmul(q.float(), k.float().T) * scale_val
+            attn_ref = torch.softmax(qk_ref, dim=-1)
+            o_ref = torch.matmul(attn_ref, v.float()).half()
+            diff = (o - o_ref).abs().max().item()
+            print(f"\n  ({sq},{skv},{d}): correctness max|diff|={diff:.4f}",
+                  file=sys.stderr)
+
+            # Warmup
+            for _ in range(warmup):
+                _launch()
+            torch.npu.synchronize()
+
+            # Timed runs with NPU Events
+            
+            # Optional CANN profiler trace
+            prof_dir = f"/data/g00895580/tmp/fa_prof/{sq}x{skv}x{d}"
+            os.makedirs(prof_dir, exist_ok=True)
+            try:
+                experimental_config = torch_npu.profiler._ExperimentalConfig(
+                    profiler_level=torch_npu.profiler.ProfilerLevel.Level2,
+                    aic_metrics=torch_npu.profiler.AiCMetrics.PipeUtilization,
+                    l2_cache=False
+                )
+                with torch_npu.profiler.profile(
+                    activities=[
+                        torch_npu.profiler.ProfilerActivity.CPU,
+                        torch_npu.profiler.ProfilerActivity.NPU,
+                    ],
+                    schedule=torch_npu.profiler.schedule(wait=0, warmup=warmup, active=1, repeat=1, skip_first=5),
+                    on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(prof_dir),
+                    record_shapes=True,
+                    profile_memory=True,
+                    with_stack=True,
+                    experimental_config=experimental_config,
+                    with_modules=True,
+                ) as prof:
+                    for _ in range(35):
+                        _launch()
+                        prof.step()
+                    torch.npu.synchronize()
+                print(f"  Profiler trace saved to {prof_dir}",
+                        file=sys.stderr)
+            except Exception as e:
+                print(f"  Profiler failed: {e}", file=sys.stderr)
+
+    run()
+    print("// Perf test done.", file=sys.stderr)
+
 
 if __name__ == "__main__":
     if "--ir-only" in sys.argv:
@@ -1114,6 +1493,15 @@ if __name__ == "__main__":
         except (ImportError, RuntimeError) as e:
             print(f"NPU not available ({e}), IR test.", file=sys.stderr)
             test_ir_double_buffer()
+    elif "--multicore-multi-buffer" in sys.argv:
+        try:
+            test_npu_multicore_multi_buffer_fa()
+        except (ImportError, RuntimeError) as e:
+            print(f"NPU not available ({e}), IR test.", file=sys.stderr)
+            test_ir_multicore_multi_buffer()
+    elif "--perf" in sys.argv:
+        test_perf_multicore_multi_buffer_fa(
+            warmup=10)
     else:
         try:
             test_npu_qk()

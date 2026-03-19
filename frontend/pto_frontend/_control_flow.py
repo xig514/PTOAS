@@ -11,10 +11,50 @@ from ._utils import ensure_index_ssa
 
 
 # ---------------------------------------------------------------------------
-#  Thread-local state for flat if_/else_ API
+#  LoopScope — tracks the current loop's induction variable
+# ---------------------------------------------------------------------------
+
+class LoopScope:
+    """Tracks the induction variable and cached mod values for a loop.
+
+    All MultiBuffers with the same ``depth`` inside one loop share the same
+    ``iv % depth`` SSA value (via the cache), which is critical for the sync
+    tracker's backward-sync deduplication.
+    """
+
+    def __init__(self, iv, start, step):
+        self.iv = iv          # ScalarValue (loop induction variable)
+        self.start = start    # int or ScalarValue
+        self.step = step      # int or ScalarValue
+        self._mod_cache = {}  # depth -> ScalarValue
+
+    def iteration_index(self, depth):
+        """Return cached ``(iv % depth)`` ScalarValue."""
+        if depth in self._mod_cache:
+            return self._mod_cache[depth]
+        result = self.iv % depth
+        self._mod_cache[depth] = result
+        return result
+
+
+# ---------------------------------------------------------------------------
+#  Thread-local state for flat if_/else_ API and loop scope stack
 # ---------------------------------------------------------------------------
 
 _tls = threading.local()
+
+
+def _get_loop_stack():
+    """Return the thread-local loop scope stack (create if needed)."""
+    if not hasattr(_tls, "loop_stack"):
+        _tls.loop_stack = []
+    return _tls.loop_stack
+
+
+def get_current_loop_scope():
+    """Return the innermost active LoopScope, or None if not in a loop."""
+    stack = _get_loop_stack()
+    return stack[-1] if stack else None
 
 
 def _get_pending_if():
@@ -68,8 +108,12 @@ def for_range(start, end, step=1):
     if tracker:
         tracker.enter_loop(loop)
 
+    iv = ScalarValue(loop.induction_variable)
+    scope = LoopScope(iv, start, step)
+    _get_loop_stack().append(scope)
+
     try:
-        yield ScalarValue(loop.induction_variable)
+        yield iv
 
         if tracker:
             tracker.finalize_loop_body(loop)
@@ -77,6 +121,7 @@ def for_range(start, end, step=1):
         _finalize_pending_if()
         scf.YieldOp([])
     finally:
+        _get_loop_stack().pop()
         ip.__exit__(None, None, None)
 
     if tracker:
@@ -111,6 +156,7 @@ class _RangeIterator:
         self._loop = None
         self._ip = None
         self._yielded = False
+        self._scope = None
 
     def __iter__(self):
         _finalize_pending_if()
@@ -133,7 +179,10 @@ class _RangeIterator:
     def __next__(self):
         if not self._yielded:
             self._yielded = True
-            return ScalarValue(self._loop.induction_variable)
+            iv = ScalarValue(self._loop.induction_variable)
+            self._scope = LoopScope(iv, self._start, self._step)
+            _get_loop_stack().append(self._scope)
+            return iv
 
         # Loop body tracing is done — emit backward sync, then close region.
         _finalize_pending_if()
@@ -144,6 +193,7 @@ class _RangeIterator:
             tracker.finalize_loop_body(self._loop)
 
         scf.YieldOp([])
+        _get_loop_stack().pop()
         self._ip.__exit__(None, None, None)
 
         if tracker:

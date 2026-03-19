@@ -67,6 +67,9 @@ from ._control_flow import for_range, range, if_, else_
 # -- tile group (dynamic buffer selection) --
 from ._tile_group import TileGroup
 
+# -- multi-buffer (auto-cycling multi-buffer) --
+from ._multi_buffer import MultiBuffer
+
 # -- event group (dynamic EVENT_ID selection) --
 from ._event_group import EventIdGroup
 
